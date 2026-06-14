@@ -1259,11 +1259,11 @@ function drawHero(ctx, x, y, weapon, facing, bobOffset, options = {}) {
   const fy = facing ? facing.y : -1;
   const facingUp = fy < -0.4;
 
-  // ハンマー回転モードは体の周りで回す
+  // ハンマー回転モード
   if (weapon === 'hammer' && options.spinning) {
     ctx.save();
     ctx.rotate(options.spinAngle || 0);
-    drawHammer(ctx, 0, -24, 20);
+    drawHammer(ctx, 0, -28, 20);
     ctx.restore();
   }
 
@@ -1272,45 +1272,108 @@ function drawHero(ctx, x, y, weapon, facing, bobOffset, options = {}) {
     drawHeldWeapon(ctx, weapon, fx, fy, options);
   }
 
-  // 足
-  ctx.fillStyle = '#2a2a2a';
-  ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth = 1.8;
-  ctx.fillRect(-9, 16, 7, 8);
-  ctx.strokeRect(-9, 16, 7, 8);
-  ctx.fillRect(2, 16, 7, 8);
-  ctx.strokeRect(2, 16, 7, 8);
-
-  // 体（四角)
-  const bodyW = 32, bodyH = 36;
-  ctx.fillStyle = '#fdf5e1';
-  ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth = 2.6;
-  roundRect(ctx, -bodyW / 2, -bodyH / 2, bodyW, bodyH, 3);
-  ctx.fill(); ctx.stroke();
-
-  // 頭の上のカール
-  ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth = 2.6;
-  ctx.beginPath();
-  ctx.moveTo(2, -bodyH / 2);
-  ctx.bezierCurveTo(11, -bodyH / 2 - 4, 9, -bodyH / 2 - 15, 0, -bodyH / 2 - 11);
-  ctx.bezierCurveTo(-6, -bodyH / 2 - 9, -3, -bodyH / 2 - 5, -2, -bodyH / 2);
-  ctx.stroke();
-
-  // 目（四角・向きで少しずれる)
-  const eyeOffX = fx * 1.6;
-  const eyeOffY = fy * 1.6;
-  ctx.fillStyle = '#1a1a1a';
-  ctx.fillRect(-9 + eyeOffX, -11 + eyeOffY, 5, 6);
-  ctx.fillRect(4 + eyeOffX, -11 + eyeOffY, 5, 6);
-
-  // ジグザグの歯
   ctx.strokeStyle = '#1a1a1a';
   ctx.lineWidth = 2;
-  drawZigzagMouth(ctx, -10, 3, 20, 5, 5);
 
-  // 上向きでないとき武器を体の前に
+  // 足（人形の短い脚）
+  ctx.fillStyle = '#3a3a3a';
+  ctx.fillRect(-9, 11, 7, 9);
+  ctx.strokeRect(-9, 11, 7, 9);
+  ctx.fillRect(2, 11, 7, 9);
+  ctx.strokeRect(2, 11, 7, 9);
+  // 靴
+  ctx.fillStyle = '#6a4020';
+  ctx.fillRect(-12, 17, 11, 5);
+  ctx.strokeRect(-12, 17, 11, 5);
+  ctx.fillRect(1, 17, 11, 5);
+  ctx.strokeRect(1, 17, 11, 5);
+
+  // 胸当て（鎧）
+  const bodyW = 30, bodyH = 22;
+  ctx.fillStyle = '#cdd1d8';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(-bodyW / 2 - 2, -bodyH / 2);
+  ctx.lineTo(bodyW / 2 + 2, -bodyH / 2);
+  ctx.lineTo(bodyW / 2 - 1, bodyH / 2);
+  ctx.lineTo(-bodyW / 2 + 1, bodyH / 2);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // 中央の縦ライン
+  ctx.strokeStyle = '#6a7080';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(0, -bodyH / 2 + 2);
+  ctx.lineTo(0, bodyH / 2 - 2);
+  ctx.stroke();
+  // 紋章（赤い十字）
+  ctx.fillStyle = '#b03030';
+  ctx.fillRect(-1.5, -5, 3, 10);
+  ctx.fillRect(-5, -1.5, 10, 3);
+
+  // 丸い手（両側）
+  ctx.fillStyle = '#c0c4ca';
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1.8;
+  ctx.beginPath(); ctx.arc(-bodyW / 2 - 4, 2, 5, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.arc(bodyW / 2 + 4, 2, 5, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke();
+
+  // 兜（ヘルメット）
+  const helmW = 28, helmH = 24;
+  const helmBottomY = -bodyH / 2 - 1; // 胸当ての上に乗る
+  const helmTopY = helmBottomY - helmH;
+  ctx.fillStyle = '#cdd1d8';
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  // 下端（顎ガード）
+  ctx.moveTo(-helmW / 2, helmBottomY);
+  ctx.lineTo(helmW / 2, helmBottomY);
+  // 右側面
+  ctx.lineTo(helmW / 2 - 1, helmBottomY - helmH * 0.4);
+  // 丸い頭頂部
+  ctx.quadraticCurveTo(helmW / 2 - 1, helmTopY, 0, helmTopY);
+  ctx.quadraticCurveTo(-helmW / 2 + 1, helmTopY, -helmW / 2 + 1, helmBottomY - helmH * 0.4);
+  // 左側面（戻る）
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+
+  // 羽根飾り（赤いプルーム）
+  ctx.strokeStyle = '#c83838';
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(0, helmTopY);
+  ctx.bezierCurveTo(-5, helmTopY - 6, -12, helmTopY - 12, -8, helmTopY - 18);
+  ctx.stroke();
+  // 留め具
+  ctx.fillStyle = '#d4a040';
+  ctx.beginPath();
+  ctx.arc(0, helmTopY + 1, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineCap = 'butt';
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.stroke();
+
+  // バイザー（縦溝＋横スリット）
+  const slitY = helmBottomY - helmH * 0.45;
+  ctx.fillStyle = '#1a1a1a';
+  // 縦のリッジ
+  ctx.fillRect(-1.5, helmTopY + 4, 3, helmH - 8);
+  // 横スリット
+  ctx.fillRect(-helmW / 2 + 4, slitY - 2, helmW - 8, 5);
+
+  // スリットの中の目（白く光って向きでずれる）
+  const eyeOffX = fx * 1.6;
+  const eyeOffY = fy * 0.8;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(-7 + eyeOffX, slitY - 0.5 + eyeOffY, 3, 2);
+  ctx.fillRect(4 + eyeOffX, slitY - 0.5 + eyeOffY, 3, 2);
+
+  // 武器を体の前に
   if (!facingUp && !(weapon === 'hammer' && options.spinning)) {
     drawHeldWeapon(ctx, weapon, fx, fy, options);
   }
@@ -1536,9 +1599,9 @@ function drawHeart(ctx, x, y, size, filled) {
 function drawPlayer() {
   if (!player.alive) return;
   // 影
-  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
   ctx.beginPath();
-  ctx.ellipse(player.x, player.y + 18, 14, 4, 0, 0, Math.PI * 2);
+  ctx.ellipse(player.x, player.y + 24, 15, 4, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // 無敵点滅

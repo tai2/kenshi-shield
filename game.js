@@ -628,6 +628,25 @@ class BossSlash {
     const cd = Math.hypot(this.x - CENTER.x, this.y - CENTER.y);
     if (cd > ARENA_R - 5) this.alive = false;
     if (this.owner === 'boss') {
+      // 盾構えで反射
+      if (player.blocking) {
+        const dx = this.x - player.x, dy = this.y - player.y;
+        const d = Math.hypot(dx, dy);
+        if (d < player.r + 26) {
+          const dot = (dx * player.facing.x + dy * player.facing.y) / Math.max(d, 0.0001);
+          if (dot > 0.2) {
+            const nx = player.facing.x, ny = player.facing.y;
+            this.vx = nx * 7;
+            this.vy = ny * 7;
+            this.angle = Math.atan2(ny, nx);
+            this.owner = 'player';
+            this.reflected = true;
+            this.damage = 5;
+            effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+            return;
+          }
+        }
+      }
       if (player.alive && Math.hypot(this.x - player.x, this.y - player.y) < this.r + player.r) {
         if (player.hit()) this.alive = false;
       }
@@ -646,7 +665,7 @@ class BossSlash {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
-    ctx.fillStyle = '#ff6060';
+    ctx.fillStyle = this.reflected ? '#7ec0ff' : '#ff6060';
     ctx.globalAlpha = 0.85;
     ctx.beginPath();
     ctx.ellipse(0, 0, 28, 10, 0, 0, Math.PI * 2);

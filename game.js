@@ -14,12 +14,25 @@ let canvas, ctx;
 let state = 'WEAPON_SELECT'; // WEAPON_SELECT, BOSS_INTRO, BATTLE, BOSS_DEAD, GAME_OVER, VICTORY
 let selectedWeapon = null;   // 'sword' | 'shield' | 'hammer'
 let stageIndex = 0;
-const stages = ['sword', 'bow', 'hammer'];
+const stages = ['sword', 'bow', 'hammer', 'bomb'];
 
 let player = null;
 let boss = null;
 let projectiles = [];
 let effects = [];
+let minions = []; // ボスの子分（爆弾ボス第二形態）
+let coins = 0;
+let upgrades = { sword: false, shield: false, hammer: false };
+const UPGRADE_COST = { hammer: 2, shield: 4, sword: 6 };
+const COIN_REWARD = 2;
+
+// ボス + 生存中の子分すべてを攻撃対象として返す。復活演出中の無敵は除外。
+function aliveEnemies() {
+  const list = [];
+  if (boss && boss.alive && boss.mode !== 'reviving') list.push(boss);
+  for (const m of minions) if (m.alive) list.push(m);
+  return list;
+}
 
 let keys = {};
 let mouse = { x: 0, y: 0, down: false };
@@ -42,8 +55,12 @@ window.addEventListener('keydown', (e) => {
     keys[e.code] = true;
     e.preventDefault();
   }
-  if (e.code === 'Enter' && (state === 'GAME_OVER' || state === 'VICTORY')) {
-    resetToWeaponSelect();
+  if (e.code === 'Enter') {
+    if (state === 'GAME_OVER' || state === 'VICTORY') {
+      resetToWeaponSelect();
+    } else if (state === 'SHOP') {
+      startStage(stageIndex + 1);
+    }
   }
 });
 window.addEventListener('keyup', (e) => {
@@ -91,6 +108,21 @@ function handleClick() {
         mouse.y >= sb.y && mouse.y <= sb.y + sb.h) {
       startGame();
     }
+  } else if (state === 'SHOP') {
+    const cost = UPGRADE_COST[selectedWeapon];
+    const buyBtn = shopBuyButton();
+    if (!upgrades[selectedWeapon] && coins >= cost &&
+        mouse.x >= buyBtn.x && mouse.x <= buyBtn.x + buyBtn.w &&
+        mouse.y >= buyBtn.y && mouse.y <= buyBtn.y + buyBtn.h) {
+      coins -= cost;
+      upgrades[selectedWeapon] = true;
+      return;
+    }
+    const contBtn = shopContinueButton();
+    if (mouse.x >= contBtn.x && mouse.x <= contBtn.x + contBtn.w &&
+        mouse.y >= contBtn.y && mouse.y <= contBtn.y + contBtn.h) {
+      startStage(stageIndex + 1);
+    }
   } else if (state === 'GAME_OVER' || state === 'VICTORY') {
     resetToWeaponSelect();
   }
@@ -109,6 +141,7 @@ class Player {
     this.alive = true;
     this.lives = 3;
     this.invuln = 1.2;
+    this.attackCooldown = 0; // 全武器共通の攻撃後クールダウン
 
     // 共通アニメーション
     this.swordSlash = 0;
@@ -117,6 +150,8 @@ class Player {
 
     // 剣
     this.swordCharge = 0;
+    this.swordSpinning = false; // 強化時の長押し回転
+    this.swordSpinAngle = 0;
 
     // 盾
     this.blocking = false;
@@ -127,13 +162,14 @@ class Player {
     this.hammerWindup = 0;     // 通常攻撃の溜め
     this.hammerSpinning = false;
     this.hammerSpinAngle = 0;
-    this.spinHitCooldown = 0;  // ボスへの連続ヒット間隔
+    this.spinHitCooldown = 0;  // 連続ヒット間隔（剣/ハンマー回転共用）
   }
 
   update(dt) {
     if (this.invuln > 0) this.invuln -= dt;
     if (this.swordSlash > 0) this.swordSlash -= dt;
     if (this.hammerSwing > 0) this.hammerSwing -= dt;
+    if (this.attackCooldown > 0) this.attackCooldown -= dt;
     this.bobTimer += dt;
 
     // 移動方向
@@ -169,7 +205,34 @@ class Player {
 
   updateWeapon(dt) {
     if (this.weapon === 'sword') {
-      if (spaceDown) this.swordCharge = Math.min(2.0, this.swordCharge + dt);
+      if (upgrades.sword) {
+        // 強化: 長押しで回転、ヒットでダメージ
+        if (spaceDown && spaceHeldDuration >= 0.25 &&
+            !this.swordSpinning && this.attackCooldown <= 0) {
+          this.swordSpinning = true;
+          this.attackCooldown = 0.5;
+        }
+        if (!spaceDown && this.swordSpinning) this.swordSpinning = false;
+        if (this.swordSpinning) {
+          this.swordSpinAngle += dt * 16;
+          this.spinHitCooldown -= dt;
+          if (this.spinHitCooldown <= 0) {
+            let hit = false;
+            for (const e of aliveEnemies()) {
+              if (Math.hypot(e.x - this.x, e.y - this.y) <= 50 + e.r) {
+                e.takeDamage(1);
+                hit = true;
+              }
+            }
+            if (hit) this.spinHitCooldown = 0.3;
+          }
+        }
+      } else {
+        // クールダウン中はチャージも蓄積しない
+        if (spaceDown && this.attackCooldown <= 0) {
+          this.swordCharge = Math.min(2.0, this.swordCharge + dt);
+        }
+      }
     } else if (this.weapon === 'shield') {
       this.blocking = spaceDown && !this.shieldThrown;
     } else if (this.weapon === 'hammer') {
@@ -179,20 +242,36 @@ class Player {
       }
       // 長押しで回転モードへ
       if (spaceDown && spaceHeldDuration >= 0.4 &&
-          !this.hammerSpinning && this.hammerWindup <= 0) {
+          !this.hammerSpinning && this.hammerWindup <= 0 &&
+          this.attackCooldown <= 0) {
         this.hammerSpinning = true;
+        this.attackCooldown = 0.5;
       }
       if (!spaceDown && this.hammerSpinning) this.hammerSpinning = false;
 
       if (this.hammerSpinning) {
         this.hammerSpinAngle += dt * 14;
         this.spinHitCooldown -= dt;
-        // ボスへの連続ヒット判定
-        if (this.spinHitCooldown <= 0 && boss) {
-          const d = Math.hypot(boss.x - this.x, boss.y - this.y);
-          if (d <= 55 + boss.r) {
-            boss.takeDamage(2);
-            this.spinHitCooldown = 0.3;
+        // 敵への連続ヒット判定（ボス + 子分）
+        if (this.spinHitCooldown <= 0) {
+          let hitAny = false;
+          for (const e of aliveEnemies()) {
+            if (Math.hypot(e.x - this.x, e.y - this.y) <= 55 + e.r) {
+              e.takeDamage(1);
+              hitAny = true;
+            }
+          }
+          if (hitAny) this.spinHitCooldown = 0.3;
+        }
+        // 強化: 近くの敵の飛び道具をランダム方向へ反射
+        if (upgrades.hammer) {
+          for (const p of projectiles) {
+            if (p.owner === 'boss' && !p.reflected && typeof p.reflect === 'function') {
+              if (Math.hypot(p.x - this.x, p.y - this.y) < 55 + (p.r || 8)) {
+                p.reflect();
+                effects.push({ type: 'spark', x: p.x, y: p.y, life: 0.25 });
+              }
+            }
           }
         }
       }
@@ -206,47 +285,72 @@ class Player {
   onSpaceRelease(heldFor) {
     if (!this.alive) return;
     if (this.weapon === 'sword') {
-      if (heldFor >= 2.0) {
+      if (upgrades.sword) {
+        // 強化: 回転中ならランダム方向へ斬撃を放つ。タップなら近接。
+        if (this.swordSpinning) {
+          this.swordSpinning = false;
+          const a = Math.random() * Math.PI * 2;
+          projectiles.push(new SwordSlash(this.x, this.y, { x: Math.cos(a), y: Math.sin(a) }));
+          this.attackCooldown = 0.5;
+        } else if (this.attackCooldown <= 0) {
+          this.swordSlash = 0.22;
+          this.checkSwordHit();
+          this.attackCooldown = 0.5;
+        }
+        return;
+      }
+      if (this.attackCooldown > 0) {
+        this.swordCharge = 0;
+        return;
+      }
+      if (this.swordCharge >= 2.0) {
         projectiles.push(new SwordSlash(this.x, this.y, this.facing));
       } else {
         this.swordSlash = 0.22;
         this.checkSwordHit();
       }
       this.swordCharge = 0;
+      this.attackCooldown = 0.5;
     } else if (this.weapon === 'shield') {
-      if (heldFor >= 0.7 && !this.shieldThrown) {
+      if (heldFor >= 0.7 && !this.shieldThrown && this.attackCooldown <= 0) {
         const proj = new ShieldThrown(this.x, this.y, this.facing, this);
         this.shieldThrown = true;
         this.shieldProj = proj;
         projectiles.push(proj);
+        this.attackCooldown = 0.5;
       }
     } else if (this.weapon === 'hammer') {
       if (this.hammerSpinning) {
         this.hammerSpinning = false;
-      } else if (this.hammerWindup <= 0) {
+        this.attackCooldown = 0.5;
+      } else if (this.hammerWindup <= 0 && this.attackCooldown <= 0) {
         this.hammerWindup = 1.0;
+        this.attackCooldown = 0.5;
       }
     }
   }
 
   checkSwordHit() {
-    if (!boss) return;
-    const dx = boss.x - this.x, dy = boss.y - this.y;
-    const d = Math.hypot(dx, dy);
     const range = 46;
-    if (d > range + boss.r) return;
-    const dot = (dx * this.facing.x + dy * this.facing.y) / Math.max(d, 0.0001);
-    if (dot > 0.2) {
-      boss.takeDamage(3);
-      effects.push({ type: 'spark', x: boss.x, y: boss.y, life: 0.3 });
+    for (const e of aliveEnemies()) {
+      const dx = e.x - this.x, dy = e.y - this.y;
+      const d = Math.hypot(dx, dy);
+      if (d > range + e.r) continue;
+      const dot = (dx * this.facing.x + dy * this.facing.y) / Math.max(d, 0.0001);
+      if (dot > 0.2) {
+        e.takeDamage(3);
+        effects.push({ type: 'spark', x: e.x, y: e.y, life: 0.3 });
+      }
     }
   }
 
   executeHammerAOE() {
     this.hammerSwing = 0.3;
     const range = 75;
-    if (boss && Math.hypot(boss.x - this.x, boss.y - this.y) <= range + boss.r) {
-      boss.takeDamage(5);
+    for (const e of aliveEnemies()) {
+      if (Math.hypot(e.x - this.x, e.y - this.y) <= range + e.r) {
+        e.takeDamage(5);
+      }
     }
     effects.push({ type: 'aoe', x: this.x, y: this.y, r: range, life: 0.35, maxLife: 0.35 });
   }
@@ -286,10 +390,13 @@ class SwordSlash {
     if (this.life <= 0) this.alive = false;
     const d = Math.hypot(this.x - CENTER.x, this.y - CENTER.y);
     if (d > ARENA_R - 5) this.alive = false;
-    if (boss && Math.hypot(boss.x - this.x, boss.y - this.y) < this.r + boss.r) {
-      boss.takeDamage(this.damage);
-      this.alive = false;
-      effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+    for (const e of aliveEnemies()) {
+      if (Math.hypot(e.x - this.x, e.y - this.y) < this.r + e.r) {
+        e.takeDamage(this.damage);
+        this.alive = false;
+        effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+        break;
+      }
     }
   }
   draw(ctx) {
@@ -322,15 +429,40 @@ class ShieldThrown {
     this.returning = false;
     this.damage = 5;
     this.hitTargets = new Set();
+    // 強化: 壁・敵に当たるとランダム方向へ反射する
+    this.bouncesLeft = upgrades.shield ? 3 : 0;
+  }
+  bounceRandom() {
+    const a = Math.random() * Math.PI * 2;
+    this.vx = Math.cos(a) * 6;
+    this.vy = Math.sin(a) * 6;
+    effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
   }
   update(dt) {
     this.angle += dt * 18;
     this.life -= dt;
     if (this.life <= 0) this.alive = false;
 
-    // アリーナの外に出たら戻る
+    // アリーナの外に当たった処理
     const cd = Math.hypot(this.x - CENTER.x, this.y - CENTER.y);
-    if (cd > ARENA_R - 10) this.returning = true;
+    if (cd > ARENA_R - 10) {
+      if (this.bouncesLeft > 0 && !this.returning) {
+        this.bouncesLeft--;
+        // 中央寄りで反射方向にランダム幅を加える
+        const toCenter = Math.atan2(CENTER.y - this.y, CENTER.x - this.x);
+        const a = toCenter + (Math.random() - 0.5) * Math.PI;
+        this.vx = Math.cos(a) * 6;
+        this.vy = Math.sin(a) * 6;
+        // 一度押し戻して即座にまた壁に当たらないように
+        const nx = (this.x - CENTER.x) / cd, ny = (this.y - CENTER.y) / cd;
+        this.x = CENTER.x + nx * (ARENA_R - 12);
+        this.y = CENTER.y + ny * (ARENA_R - 12);
+        this.hitTargets = new Set();
+        effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.25 });
+      } else {
+        this.returning = true;
+      }
+    }
 
     if (this.returning && this.ownerRef && this.ownerRef.alive) {
       const dx = this.ownerRef.x - this.x;
@@ -348,12 +480,19 @@ class ShieldThrown {
     }
     this.x += this.vx; this.y += this.vy;
 
-    if (boss && Math.hypot(boss.x - this.x, boss.y - this.y) < this.r + boss.r) {
-      if (!this.hitTargets.has('boss')) {
-        boss.takeDamage(this.damage);
-        this.hitTargets.add('boss');
-        this.returning = true;
+    for (const e of aliveEnemies()) {
+      if (this.hitTargets.has(e)) continue;
+      if (Math.hypot(e.x - this.x, e.y - this.y) < this.r + e.r) {
+        e.takeDamage(this.damage);
+        this.hitTargets.add(e);
         effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+        if (this.bouncesLeft > 0 && !this.returning) {
+          this.bouncesLeft--;
+          this.bounceRandom();
+        } else {
+          this.returning = true;
+        }
+        break;
       }
     }
   }
@@ -412,12 +551,24 @@ class Arrow {
         if (player.hit()) this.alive = false;
       }
     } else if (this.reflected) {
-      if (boss && Math.hypot(this.x - boss.x, this.y - boss.y) < this.r + boss.r) {
-        boss.takeDamage(this.damage);
-        this.alive = false;
-        effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+      for (const e of aliveEnemies()) {
+        if (Math.hypot(this.x - e.x, this.y - e.y) < this.r + e.r) {
+          e.takeDamage(this.damage);
+          this.alive = false;
+          effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+          break;
+        }
       }
     }
+  }
+  reflect() {
+    const a = Math.random() * Math.PI * 2;
+    this.vx = Math.cos(a) * 7;
+    this.vy = Math.sin(a) * 7;
+    this.angle = Math.atan2(this.vy, this.vx);
+    this.owner = 'player';
+    this.reflected = true;
+    this.damage = 2;
   }
   draw(ctx) {
     ctx.save();
@@ -459,6 +610,16 @@ class BossSlash {
     this.life = 3.0;
     this.alive = true;
     this.owner = 'boss';
+    this.reflected = false;
+    this.damage = 3;
+  }
+  reflect() {
+    const a = Math.random() * Math.PI * 2;
+    this.vx = Math.cos(a) * 6;
+    this.vy = Math.sin(a) * 6;
+    this.angle = Math.atan2(this.vy, this.vx);
+    this.owner = 'player';
+    this.reflected = true;
   }
   update(dt) {
     this.x += this.vx; this.y += this.vy;
@@ -466,8 +627,19 @@ class BossSlash {
     if (this.life <= 0) this.alive = false;
     const cd = Math.hypot(this.x - CENTER.x, this.y - CENTER.y);
     if (cd > ARENA_R - 5) this.alive = false;
-    if (player.alive && Math.hypot(this.x - player.x, this.y - player.y) < this.r + player.r) {
-      if (player.hit()) this.alive = false;
+    if (this.owner === 'boss') {
+      if (player.alive && Math.hypot(this.x - player.x, this.y - player.y) < this.r + player.r) {
+        if (player.hit()) this.alive = false;
+      }
+    } else {
+      for (const e of aliveEnemies()) {
+        if (Math.hypot(this.x - e.x, this.y - e.y) < this.r + e.r) {
+          e.takeDamage(this.damage);
+          this.alive = false;
+          effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+          break;
+        }
+      }
     }
   }
   draw(ctx) {
@@ -533,12 +705,24 @@ class BigArrow {
         if (player.hit()) this.alive = false;
       }
     } else if (this.reflected) {
-      if (boss && Math.hypot(this.x - boss.x, this.y - boss.y) < this.r + boss.r) {
-        boss.takeDamage(this.damage);
-        this.alive = false;
-        effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+      for (const e of aliveEnemies()) {
+        if (Math.hypot(this.x - e.x, this.y - e.y) < this.r + e.r) {
+          e.takeDamage(this.damage);
+          this.alive = false;
+          effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+          break;
+        }
       }
     }
+  }
+  reflect() {
+    const a = Math.random() * Math.PI * 2;
+    this.vx = Math.cos(a) * 9;
+    this.vy = Math.sin(a) * 9;
+    this.angle = Math.atan2(this.vy, this.vx);
+    this.owner = 'player';
+    this.reflected = true;
+    this.damage = 4;
   }
   draw(ctx) {
     // 軌跡
@@ -574,6 +758,132 @@ class BigArrow {
     ctx.lineTo(-26, 6);
     ctx.closePath();
     ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ボス4の爆弾飛び道具（大砲弾・投擲ボム共用）
+class BombProjectile {
+  constructor(x, y, tx, ty, flightTime, explodeR, kind) {
+    this.startX = x; this.startY = y;
+    this.x = x; this.y = y;
+    this.tx = tx; this.ty = ty;
+    this.flightTime = flightTime;
+    this.timer = 0;
+    this.height = 0;
+    this.maxHeight = (kind === 'cannon') ? 35 : 65;
+    this.r = (kind === 'cannon') ? 10 : 8;
+    this.explodeR = explodeR;
+    this.alive = true;
+    this.owner = 'boss';
+    this.kind = kind;
+    this.fuseSpark = 0;
+    this.reflected = false;
+  }
+  reflect() {
+    // ランダム方向の地点を新たな着弾点に再設定
+    const a = Math.random() * Math.PI * 2;
+    const dist = 240;
+    this.startX = this.x;
+    this.startY = this.y;
+    let tx = this.x + Math.cos(a) * dist;
+    let ty = this.y + Math.sin(a) * dist;
+    // アリーナ内に収まるようクランプ
+    const cd = Math.hypot(tx - CENTER.x, ty - CENTER.y);
+    if (cd > ARENA_R - 20) {
+      const k = (ARENA_R - 20) / cd;
+      tx = CENTER.x + (tx - CENTER.x) * k;
+      ty = CENTER.y + (ty - CENTER.y) * k;
+    }
+    this.tx = tx; this.ty = ty;
+    this.timer = 0;
+    this.flightTime = 0.6;
+    this.maxHeight = 50;
+    this.owner = 'player';
+    this.reflected = true;
+  }
+  update(dt) {
+    this.timer += dt;
+    this.fuseSpark += dt * 14;
+    const t = this.timer / this.flightTime;
+    if (t >= 1) {
+      this.x = this.tx; this.y = this.ty;
+      this.height = 0;
+      effects.push({ type: 'aoe', x: this.x, y: this.y, r: this.explodeR, life: 0.5, maxLife: 0.5 });
+      effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.4 });
+      if (this.owner === 'boss') {
+        if (player.alive && Math.hypot(player.x - this.x, player.y - this.y) < this.explodeR) {
+          player.hit();
+        }
+      } else {
+        for (const e of aliveEnemies()) {
+          if (Math.hypot(e.x - this.x, e.y - this.y) < this.explodeR) {
+            e.takeDamage(6);
+          }
+        }
+      }
+      this.alive = false;
+      return;
+    }
+    this.x = this.startX + (this.tx - this.startX) * t;
+    this.y = this.startY + (this.ty - this.startY) * t;
+    this.height = Math.sin(t * Math.PI) * this.maxHeight;
+  }
+  draw(ctx) {
+    // 着弾予告マーカー
+    const t = this.timer / this.flightTime;
+    ctx.save();
+    ctx.translate(this.tx, this.ty);
+    const flash = 0.45 + 0.3 * Math.sin(t * 26);
+    ctx.strokeStyle = `rgba(255, 80, 60, ${flash})`;
+    ctx.fillStyle = `rgba(255, 80, 60, 0.14)`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.explodeR, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-this.explodeR * 0.4, 0); ctx.lineTo(this.explodeR * 0.4, 0);
+    ctx.moveTo(0, -this.explodeR * 0.4); ctx.lineTo(0, this.explodeR * 0.4);
+    ctx.stroke();
+    ctx.restore();
+    // 影
+    ctx.fillStyle = `rgba(0,0,0,${Math.max(0.05, 0.28 - this.height * 0.002)})`;
+    ctx.beginPath();
+    ctx.ellipse(this.x, this.y, Math.max(2, this.r - this.height * 0.06), Math.max(1, this.r * 0.45 - this.height * 0.025), 0, 0, Math.PI * 2);
+    ctx.fill();
+    // ボム本体
+    ctx.save();
+    ctx.translate(this.x, this.y - this.height);
+    ctx.fillStyle = '#3a3a44';
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.r, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    // ハイライト
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.beginPath();
+    ctx.arc(-this.r * 0.35, -this.r * 0.4, this.r * 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    // 導火線
+    ctx.strokeStyle = '#3a2818';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, -this.r);
+    ctx.quadraticCurveTo(3, -this.r - 5, 1, -this.r - 9);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    // 火花
+    const sparkR = 2 + Math.sin(this.fuseSpark) * 1;
+    ctx.fillStyle = '#ffd040';
+    ctx.beginPath();
+    ctx.arc(1, -this.r - 9, sparkR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff5b0';
+    ctx.beginPath();
+    ctx.arc(1, -this.r - 9, sparkR * 0.5, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 }
@@ -1130,6 +1440,698 @@ class HammerBoss extends Boss {
   }
 }
 
+// ---- ボス4: 爆弾（ラスボス） ---------------------------------------
+class BombBoss extends Boss {
+  constructor() {
+    super(CENTER.x, CENTER.y - 100);
+    this.r = 32;
+    // 第一形態のmode: idle | telegraphOffscreen | flyingOffscreen | cannonBarrage | returnToArena
+    //                | throwTelegraph | throwingBombs
+    //                | chargeTelegraph | charging | selfDestructWindup | cooldown
+    // 第二形態追加mode: reviving | rapidFireTelegraph | rapidFire
+    //                  | telegraphSummon | flyingToSummon | summonHold
+    this.mode = 'idle';
+    this.modeTimer = 2.5;
+    this.angle = 0;
+    this.fuseSpark = 0;
+    this.bobTimer = 0;
+    this.startPos = null;
+    this.targetPos = null;
+    this.cannonCooldown = 0;
+    this.bombsLeft = 0;
+    this.bombCooldown = 0;
+    this.rapidFireCooldown = 0;
+    this.revived = false; // 一度倒されると true、第二形態突入
+  }
+  isAttacking() { return this.mode === 'charging'; }
+  takeDamage(amount) {
+    if (!this.alive) return;
+    if (this.mode === 'reviving') return; // 復活演出中は無敵
+    this.hp -= amount;
+    this.hitFlash = 0.18;
+    if (this.hp <= 0) {
+      if (!this.revived) {
+        // 第二形態へ復活：HP満タンで再生
+        this.revived = true;
+        this.hp = BOSS_MAX_HP;
+        this.mode = 'reviving';
+        this.modeTimer = 1.8;
+        // 中央付近へ復帰
+        effects.push({ type: 'bossDeath', x: this.x, y: this.y, life: 1.0, maxLife: 1.0 });
+        effects.push({ type: 'aoe', x: this.x, y: this.y, r: 90, life: 0.6, maxLife: 0.6 });
+        return;
+      }
+      this.hp = 0;
+      this.alive = false;
+      effects.push({ type: 'bossDeath', x: this.x, y: this.y, life: 1.5, maxLife: 1.5 });
+      // 子分も巻き添えで消滅
+      for (const m of minions) {
+        if (m.alive) {
+          m.alive = false;
+          effects.push({ type: 'aoe', x: m.x, y: m.y, r: 30, life: 0.4, maxLife: 0.4 });
+        }
+      }
+    }
+  }
+  pickNextAttack() {
+    const c = Math.random();
+    if (!this.revived) {
+      if (c < 0.35) {
+        this.mode = 'telegraphOffscreen';
+        this.modeTimer = 0.7;
+      } else if (c < 0.7) {
+        this.mode = 'throwTelegraph';
+        this.modeTimer = 0.5;
+        this.bombsLeft = 3;
+        this.bombCooldown = 0;
+      } else {
+        this.mode = 'chargeTelegraph';
+        this.modeTimer = 0.6;
+      }
+      return;
+    }
+    // 第二形態：既存の3パターン + 連射 + 子分召喚
+    const canSummon = minions.length === 0;
+    if (c < 0.2) {
+      this.mode = 'telegraphOffscreen';
+      this.modeTimer = 0.7;
+    } else if (c < 0.4) {
+      this.mode = 'throwTelegraph';
+      this.modeTimer = 0.5;
+      this.bombsLeft = 3;
+      this.bombCooldown = 0;
+    } else if (c < 0.6) {
+      this.mode = 'chargeTelegraph';
+      this.modeTimer = 0.6;
+    } else if (c < 0.8 || !canSummon) {
+      this.mode = 'rapidFireTelegraph';
+      this.modeTimer = 0.7;
+    } else {
+      this.mode = 'telegraphSummon';
+      this.modeTimer = 0.8;
+    }
+  }
+  update(dt) {
+    if (!this.alive) return;
+    if (this.hitFlash > 0) this.hitFlash -= dt;
+    this.modeTimer -= dt;
+    this.fuseSpark += dt * 12;
+    this.bobTimer += dt;
+
+    if (this.mode === 'idle') {
+      // ホームポジションへ漂う
+      const homeX = CENTER.x;
+      const homeY = CENTER.y - 100;
+      this.x += (homeX - this.x) * 0.04;
+      this.y += (homeY - this.y) * 0.04 + Math.sin(this.bobTimer * 2) * 0.3;
+      this.angle = Math.sin(this.bobTimer * 1.5) * 0.08;
+      if (this.modeTimer <= 0) this.pickNextAttack();
+    } else if (this.mode === 'reviving') {
+      // 復活演出：中央へ漂いつつ火花を強く出す
+      this.fuseSpark += dt * 36;
+      this.angle += dt * 8;
+      this.x += (CENTER.x - this.x) * 0.05;
+      this.y += ((CENTER.y - 100) - this.y) * 0.05;
+      if (this.modeTimer <= 0) {
+        this.mode = 'idle';
+        this.modeTimer = 1.4;
+      }
+    } else if (this.mode === 'rapidFireTelegraph') {
+      this.angle += dt * 8;
+      this.fuseSpark += dt * 22;
+      if (this.modeTimer <= 0) {
+        this.mode = 'rapidFire';
+        this.modeTimer = 3.0;
+        this.rapidFireCooldown = 0;
+      }
+    } else if (this.mode === 'rapidFire') {
+      // 3秒間ボムを連射
+      this.angle += dt * 4;
+      this.rapidFireCooldown -= dt;
+      if (this.rapidFireCooldown <= 0) {
+        const tx = player.x + (Math.random() - 0.5) * 110;
+        const ty = player.y + (Math.random() - 0.5) * 110;
+        projectiles.push(new BombProjectile(this.x, this.y, tx, ty, 0.55, 42, 'thrown'));
+        this.rapidFireCooldown = 0.26;
+      }
+      if (this.modeTimer <= 0) {
+        this.mode = 'idle';
+        this.modeTimer = 1.8;
+      }
+    } else if (this.mode === 'telegraphSummon') {
+      this.angle += dt * 5;
+      this.fuseSpark += dt * 14;
+      if (this.modeTimer <= 0) {
+        const sides = [
+          { x: CENTER.x, y: 40 },
+          { x: CENTER.x, y: H - 40 },
+          { x: 40, y: CENTER.y },
+          { x: W - 40, y: CENTER.y },
+        ];
+        this.startPos = { x: this.x, y: this.y };
+        this.targetPos = sides[Math.floor(Math.random() * sides.length)];
+        this.mode = 'flyingToSummon';
+        this.modeTimer = 0.6;
+      }
+    } else if (this.mode === 'flyingToSummon') {
+      const t = 1 - Math.max(0, this.modeTimer) / 0.6;
+      this.x = this.startPos.x + (this.targetPos.x - this.startPos.x) * t;
+      this.y = this.startPos.y + (this.targetPos.y - this.startPos.y) * t;
+      this.angle += dt * 4;
+      if (this.modeTimer <= 0) {
+        this.x = this.targetPos.x;
+        this.y = this.targetPos.y;
+        // アリーナ内に対角の位置で2体召喚
+        const a = Math.random() * Math.PI * 2;
+        const dist = 140;
+        const m1 = new BombMinion(CENTER.x + Math.cos(a) * dist, CENTER.y + Math.sin(a) * dist);
+        const m2 = new BombMinion(CENTER.x + Math.cos(a + Math.PI) * dist, CENTER.y + Math.sin(a + Math.PI) * dist);
+        minions.push(m1, m2);
+        effects.push({ type: 'spark', x: m1.x, y: m1.y, life: 0.4 });
+        effects.push({ type: 'spark', x: m2.x, y: m2.y, life: 0.4 });
+        this.mode = 'summonHold';
+        // 子分が生存中はずっと場外。安全のため15秒上限。
+        this.modeTimer = 15.0;
+      }
+    } else if (this.mode === 'summonHold') {
+      this.angle += dt * 0.6; // 静かに揺れる
+      const aliveCount = minions.reduce((n, m) => n + (m.alive ? 1 : 0), 0);
+      if (aliveCount === 0 || this.modeTimer <= 0) {
+        this.startPos = { x: this.x, y: this.y };
+        this.targetPos = { x: CENTER.x, y: CENTER.y - 100 };
+        this.mode = 'returnToArena';
+        this.modeTimer = 0.7;
+      }
+    } else if (this.mode === 'telegraphOffscreen') {
+      this.angle += dt * 5;
+      if (this.modeTimer <= 0) {
+        // 画面外（アリーナの外側、キャンバスの縁）の位置を選ぶ
+        const sides = [
+          { x: CENTER.x, y: 40 },
+          { x: CENTER.x, y: H - 40 },
+          { x: 40, y: CENTER.y },
+          { x: W - 40, y: CENTER.y },
+        ];
+        this.startPos = { x: this.x, y: this.y };
+        this.targetPos = sides[Math.floor(Math.random() * sides.length)];
+        this.mode = 'flyingOffscreen';
+        this.modeTimer = 0.7;
+      }
+    } else if (this.mode === 'flyingOffscreen') {
+      const t = 1 - Math.max(0, this.modeTimer) / 0.7;
+      this.x = this.startPos.x + (this.targetPos.x - this.startPos.x) * t;
+      this.y = this.startPos.y + (this.targetPos.y - this.startPos.y) * t;
+      this.angle += dt * 4;
+      if (this.modeTimer <= 0) {
+        this.x = this.targetPos.x;
+        this.y = this.targetPos.y;
+        this.mode = 'cannonBarrage';
+        this.modeTimer = 3.6;
+        this.cannonCooldown = 0.4;
+      }
+    } else if (this.mode === 'cannonBarrage') {
+      this.cannonCooldown -= dt;
+      this.angle = Math.sin(this.bobTimer * 3) * 0.18;
+      if (this.cannonCooldown <= 0) {
+        // プレイヤー近辺へ大砲弾
+        const tx = player.x + (Math.random() - 0.5) * 80;
+        const ty = player.y + (Math.random() - 0.5) * 80;
+        projectiles.push(new BombProjectile(this.x, this.y, tx, ty, 1.0, 70, 'cannon'));
+        this.cannonCooldown = 0.85;
+      }
+      if (this.modeTimer <= 0) {
+        this.startPos = { x: this.x, y: this.y };
+        this.targetPos = { x: CENTER.x, y: CENTER.y - 100 };
+        this.mode = 'returnToArena';
+        this.modeTimer = 0.7;
+      }
+    } else if (this.mode === 'returnToArena') {
+      const t = 1 - Math.max(0, this.modeTimer) / 0.7;
+      this.x = this.startPos.x + (this.targetPos.x - this.startPos.x) * t;
+      this.y = this.startPos.y + (this.targetPos.y - this.startPos.y) * t;
+      this.angle += dt * 4;
+      if (this.modeTimer <= 0) {
+        this.mode = 'idle';
+        this.modeTimer = 1.5;
+      }
+    } else if (this.mode === 'throwTelegraph') {
+      this.angle += dt * 4;
+      if (this.modeTimer <= 0) {
+        this.mode = 'throwingBombs';
+        this.modeTimer = 2.0;
+        this.bombCooldown = 0;
+      }
+    } else if (this.mode === 'throwingBombs') {
+      this.bombCooldown -= dt;
+      this.angle = Math.sin(this.bobTimer * 5) * 0.2;
+      if (this.bombCooldown <= 0 && this.bombsLeft > 0) {
+        projectiles.push(new BombProjectile(this.x, this.y, player.x, player.y, 0.8, 55, 'thrown'));
+        this.bombsLeft--;
+        this.bombCooldown = 0.55;
+      }
+      if (this.bombsLeft <= 0 && this.bombCooldown <= -0.3) {
+        this.mode = 'idle';
+        this.modeTimer = 1.5;
+      }
+    } else if (this.mode === 'chargeTelegraph') {
+      this.angle += dt * 6;
+      this.fuseSpark += dt * 18;
+      if (this.modeTimer <= 0) {
+        this.mode = 'charging';
+        this.modeTimer = 2.5;
+      }
+    } else if (this.mode === 'charging') {
+      this.angle += dt * 9;
+      this.fuseSpark += dt * 18;
+      const dx = player.x - this.x, dy = player.y - this.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const speed = 3.8;
+      this.x += dx / d * speed;
+      this.y += dy / d * speed;
+      // アリーナ内に制限
+      const ddx = this.x - CENTER.x, ddy = this.y - CENTER.y;
+      const ad = Math.hypot(ddx, ddy);
+      if (ad > ARENA_R - this.r) {
+        this.x = CENTER.x + ddx / ad * (ARENA_R - this.r);
+        this.y = CENTER.y + ddy / ad * (ARENA_R - this.r);
+      }
+      // 接触ダメージは突進中のみ
+      if (this.mode === 'charging' && player.alive &&
+          Math.hypot(player.x - this.x, player.y - this.y) < this.r + player.r) {
+        player.hit();
+      }
+      // プレイヤーに到達 or タイムアウトで停止
+      if (d < this.r + player.r + 5 || this.modeTimer <= 0) {
+        this.mode = 'selfDestructWindup';
+        this.modeTimer = 1.0;
+      }
+    } else if (this.mode === 'selfDestructWindup') {
+      this.fuseSpark += dt * 40;
+      this.angle += dt * 4;
+      if (this.modeTimer <= 0) {
+        const explodeR = 95;
+        effects.push({ type: 'aoe', x: this.x, y: this.y, r: explodeR, life: 0.7, maxLife: 0.7 });
+        effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.6 });
+        if (player.alive && Math.hypot(player.x - this.x, player.y - this.y) < explodeR) {
+          player.hit();
+        }
+        this.mode = 'cooldown';
+        this.modeTimer = 5.0;
+      }
+    } else if (this.mode === 'cooldown') {
+      // ぐったり。ホームへゆっくり戻る
+      this.angle += dt * 0.4;
+      this.x += (CENTER.x - this.x) * 0.006;
+      this.y += ((CENTER.y - 100) - this.y) * 0.006;
+      if (this.modeTimer <= 0) {
+        this.mode = 'idle';
+        this.modeTimer = 1.5;
+      }
+    }
+  }
+  draw(ctx) {
+    this.baseDraw(function() {
+      ctx.translate(this.x, this.y);
+
+      // 復活演出のオーラ
+      if (this.mode === 'reviving') {
+        const t = 1 - this.modeTimer / 1.8;
+        ctx.strokeStyle = `rgba(255, 120, 50, ${0.75 - t * 0.45})`;
+        ctx.fillStyle = `rgba(255, 120, 50, 0.16)`;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(0, 0, 50 + Math.sin(t * 28) * 10, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+        // 放射状の輝き
+        ctx.strokeStyle = `rgba(255, 220, 100, ${0.7 - t * 0.6})`;
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 8; i++) {
+          const a = i / 8 * Math.PI * 2 + t * 4;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(a) * 40, Math.sin(a) * 40);
+          ctx.lineTo(Math.cos(a) * 80, Math.sin(a) * 80);
+          ctx.stroke();
+        }
+      }
+      // 自爆カウントダウン用の警告リング（回転前に描画）
+      if (this.mode === 'selfDestructWindup') {
+        const t = 1 - this.modeTimer;
+        ctx.strokeStyle = `rgba(255, 60, 60, ${0.6 + 0.4 * Math.sin(t * 30)})`;
+        ctx.fillStyle = `rgba(255, 60, 60, 0.1)`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(0, 0, 95, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+      }
+      // 突進予告：照準線
+      if (this.mode === 'chargeTelegraph') {
+        const dx = player.x - this.x, dy = player.y - this.y;
+        const ang = Math.atan2(dy, dx);
+        ctx.strokeStyle = 'rgba(255, 80, 60, 0.55)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 6]);
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ang) * 40, Math.sin(ang) * 40);
+        ctx.lineTo(Math.cos(ang) * 320, Math.sin(ang) * 320);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // 本体の色（第二形態はデフォルトが赤暗）
+      const baseColor = this.revived ? '#3a2a30' : '#3a3a44';
+      let bodyColor = baseColor;
+      if (this.mode === 'chargeTelegraph') {
+        bodyColor = (Math.floor(this.modeTimer * 18) % 2 === 0) ? '#d04040' : baseColor;
+      } else if (this.mode === 'charging') {
+        bodyColor = '#d04040';
+      } else if (this.mode === 'selfDestructWindup') {
+        const t = 1 - this.modeTimer;
+        bodyColor = (Math.floor(t * 25) % 2 === 0) ? '#ff5050' : '#a01010';
+      } else if (this.mode === 'telegraphOffscreen' || this.mode === 'throwTelegraph') {
+        bodyColor = (Math.floor(this.modeTimer * 18) % 2 === 0) ? '#806820' : baseColor;
+      } else if (this.mode === 'cooldown') {
+        bodyColor = '#5a5a64';
+      } else if (this.mode === 'rapidFireTelegraph' || this.mode === 'rapidFire') {
+        bodyColor = (Math.floor(this.fuseSpark) % 2 === 0) ? '#ff8030' : baseColor;
+      } else if (this.mode === 'telegraphSummon' || this.mode === 'flyingToSummon' || this.mode === 'summonHold') {
+        bodyColor = (Math.floor(this.modeTimer * 16) % 2 === 0) ? '#7050d0' : baseColor;
+      } else if (this.mode === 'reviving') {
+        bodyColor = (Math.floor(this.modeTimer * 25) % 2 === 0) ? '#ffd040' : '#ff6060';
+      }
+
+      // 自爆中のパルススケール
+      let scale = 1;
+      if (this.mode === 'selfDestructWindup') {
+        scale = 1 + (1 - this.modeTimer) * 0.18 + Math.sin(this.fuseSpark) * 0.05;
+      }
+
+      // 両手のボム（装飾、ワールド向き）
+      const handBombDist = this.r + 14;
+      const handBombR = 10;
+      const handBob = Math.sin(this.bobTimer * 3) * 2;
+      for (const sign of [-1, 1]) {
+        ctx.save();
+        ctx.translate(sign * handBombDist, 8 + handBob);
+        ctx.fillStyle = '#3a3a44';
+        ctx.strokeStyle = '#1a1a1a';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, handBombR, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.18)';
+        ctx.beginPath(); ctx.arc(-3, -3, 2.5, 0, Math.PI * 2); ctx.fill();
+        // 導火線
+        ctx.strokeStyle = '#3a2818';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(0, -handBombR);
+        ctx.quadraticCurveTo(3, -handBombR - 4, 1, -handBombR - 9);
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+        // 火花
+        const hs = 1.6 + Math.sin(this.fuseSpark + sign * 0.7) * 0.6;
+        ctx.fillStyle = '#ffd040';
+        ctx.beginPath(); ctx.arc(1, -handBombR - 9, hs, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff5b0';
+        ctx.beginPath(); ctx.arc(1, -handBombR - 9, hs * 0.5, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+
+      ctx.save();
+      ctx.scale(scale, scale);
+      ctx.rotate(this.angle);
+
+      // 本体（球）
+      ctx.fillStyle = bodyColor;
+      ctx.strokeStyle = '#1a1a1a';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, this.r, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      // ハイライト
+      ctx.fillStyle = 'rgba(255,255,255,0.16)';
+      ctx.beginPath();
+      ctx.arc(-this.r * 0.35, -this.r * 0.4, this.r * 0.28, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 導火線
+      ctx.strokeStyle = '#3a2818';
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(0, -this.r);
+      ctx.quadraticCurveTo(10, -this.r - 18, 6, -this.r - 36);
+      ctx.stroke();
+      // 縞模様
+      ctx.strokeStyle = '#6a4a30';
+      ctx.lineWidth = 1.4;
+      for (let i = 1; i <= 6; i++) {
+        const tt = i / 7;
+        const px = 10 * (2 * tt - tt * tt);
+        const py = -this.r - 36 * tt;
+        ctx.beginPath();
+        ctx.moveTo(px - 3, py + 1);
+        ctx.lineTo(px + 3, py - 1);
+        ctx.stroke();
+      }
+      ctx.lineCap = 'butt';
+      // 火花
+      const tipX = 6, tipY = -this.r - 36;
+      const sparkR = 4 + Math.sin(this.fuseSpark) * 1.5;
+      ctx.fillStyle = '#ffd040';
+      ctx.beginPath();
+      ctx.arc(tipX, tipY, sparkR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff5b0';
+      ctx.beginPath();
+      ctx.arc(tipX, tipY, sparkR * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+      // 火花の放射
+      ctx.strokeStyle = '#ffd040';
+      ctx.lineWidth = 1.2;
+      for (let i = 0; i < 5; i++) {
+        const a = i / 5 * Math.PI * 2 + this.fuseSpark * 0.3;
+        ctx.beginPath();
+        ctx.moveTo(tipX + Math.cos(a) * sparkR, tipY + Math.sin(a) * sparkR);
+        ctx.lineTo(tipX + Math.cos(a) * (sparkR + 4), tipY + Math.sin(a) * (sparkR + 4));
+        ctx.stroke();
+      }
+
+      // 怒り目
+      const eyeY = -this.r * 0.12;
+      // 左目
+      ctx.fillStyle = '#1a1a1a';
+      ctx.save();
+      ctx.translate(-this.r * 0.32, eyeY);
+      ctx.beginPath();
+      ctx.moveTo(-9, -8);
+      ctx.lineTo(10, -1);
+      ctx.lineTo(7, 8);
+      ctx.lineTo(-4, 8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(2, 2, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      // 右目
+      ctx.save();
+      ctx.translate(this.r * 0.32, eyeY);
+      ctx.fillStyle = '#1a1a1a';
+      ctx.beginPath();
+      ctx.moveTo(9, -8);
+      ctx.lineTo(-10, -1);
+      ctx.lineTo(-7, 8);
+      ctx.lineTo(4, 8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(-2, 2, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // クールダウン中はぐるぐる目
+      if (this.mode === 'cooldown') {
+        ctx.fillStyle = bodyColor;
+        // 目を覆う
+        ctx.fillRect(-this.r * 0.32 - 10, eyeY - 9, 22, 19);
+        ctx.fillRect(this.r * 0.32 - 12, eyeY - 9, 22, 19);
+        ctx.strokeStyle = '#1a1a1a';
+        ctx.lineWidth = 2;
+        const swirl = this.bobTimer * 4;
+        for (const sx of [-this.r * 0.32, this.r * 0.32]) {
+          ctx.beginPath();
+          for (let i = 0; i < 20; i++) {
+            const r = i * 0.4;
+            const a = i * 0.5 + swirl;
+            const px = sx + Math.cos(a) * r;
+            const py = eyeY + Math.sin(a) * r;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.stroke();
+        }
+      }
+
+      ctx.restore();
+    });
+  }
+}
+
+// 爆弾ボスの子分（小型爆弾、逃げながら投擲）
+class BombMinion {
+  constructor(x, y) {
+    this.x = x; this.y = y;
+    this.r = 16;
+    this.maxHp = 15;
+    this.hp = this.maxHp;
+    this.alive = true;
+    this.hitFlash = 0;
+    this.mode = 'spawn'; // spawn -> flee
+    this.modeTimer = 0.5;
+    this.throwCooldown = 1.6;
+    this.angle = 0;
+    this.bobTimer = 0;
+    this.fuseSpark = 0;
+  }
+  takeDamage(amount) {
+    if (!this.alive) return;
+    this.hp -= amount;
+    this.hitFlash = 0.16;
+    if (this.hp <= 0) {
+      this.hp = 0;
+      this.alive = false;
+      effects.push({ type: 'aoe', x: this.x, y: this.y, r: 32, life: 0.4, maxLife: 0.4 });
+      effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.4 });
+    }
+  }
+  update(dt) {
+    if (!this.alive) return;
+    if (this.hitFlash > 0) this.hitFlash -= dt;
+    this.bobTimer += dt;
+    this.fuseSpark += dt * 12;
+
+    if (this.mode === 'spawn') {
+      this.modeTimer -= dt;
+      this.angle += dt * 6;
+      if (this.modeTimer <= 0) this.mode = 'flee';
+      return;
+    }
+
+    // プレイヤーから逃げる（遠いときは横移動）
+    const dx = this.x - player.x, dy = this.y - player.y;
+    const d = Math.hypot(dx, dy) || 1;
+    let mvx, mvy;
+    if (d < 220) {
+      const sp = 2.5;
+      mvx = dx / d * sp;
+      mvy = dy / d * sp;
+    } else {
+      const sp = 1.4;
+      mvx = -dy / d * sp;
+      mvy = dx / d * sp;
+    }
+    this.x += mvx;
+    this.y += mvy;
+
+    // アリーナ内に制限
+    const ddx = this.x - CENTER.x, ddy = this.y - CENTER.y;
+    const ad = Math.hypot(ddx, ddy);
+    if (ad > ARENA_R - this.r - 20) {
+      this.x = CENTER.x + ddx / ad * (ARENA_R - this.r - 20);
+      this.y = CENTER.y + ddy / ad * (ARENA_R - this.r - 20);
+    }
+    this.angle = Math.sin(this.bobTimer * 4) * 0.18;
+
+    // 投擲
+    this.throwCooldown -= dt;
+    if (this.throwCooldown <= 0) {
+      projectiles.push(new BombProjectile(this.x, this.y, player.x, player.y, 0.7, 42, 'thrown'));
+      this.throwCooldown = 1.8 + Math.random() * 0.6;
+    }
+  }
+  draw(ctx) {
+    if (!this.alive) return;
+    ctx.save();
+    if (this.hitFlash > 0) {
+      ctx.shadowColor = '#fff';
+      ctx.shadowBlur = 14;
+    }
+    ctx.translate(this.x, this.y);
+
+    let scale = 1;
+    if (this.mode === 'spawn') {
+      scale = 1 - this.modeTimer / 0.5;
+    }
+    ctx.save();
+    ctx.scale(scale, scale);
+    ctx.rotate(this.angle);
+
+    // 本体
+    ctx.fillStyle = '#3a2a30';
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.r, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    // ハイライト
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.beginPath();
+    ctx.arc(-this.r * 0.35, -this.r * 0.4, this.r * 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    // 導火線
+    ctx.strokeStyle = '#3a2818';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, -this.r);
+    ctx.quadraticCurveTo(5, -this.r - 10, 3, -this.r - 18);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    // 火花
+    const sparkR = 2.4 + Math.sin(this.fuseSpark) * 1;
+    ctx.fillStyle = '#ffd040';
+    ctx.beginPath();
+    ctx.arc(3, -this.r - 18, sparkR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff5b0';
+    ctx.beginPath();
+    ctx.arc(3, -this.r - 18, sparkR * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    // 小さな怒り目
+    ctx.fillStyle = '#1a1a1a';
+    ctx.save();
+    ctx.translate(-5, -1);
+    ctx.beginPath();
+    ctx.moveTo(-4, -4); ctx.lineTo(5, 0); ctx.lineTo(3, 4); ctx.lineTo(-2, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    ctx.translate(5, -1);
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath();
+    ctx.moveTo(4, -4); ctx.lineTo(-5, 0); ctx.lineTo(-3, 4); ctx.lineTo(2, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    ctx.restore();
+
+    // HPバー（被弾後のみ）
+    if (this.hp < this.maxHp) {
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillRect(-this.r, -this.r - 12, this.r * 2, 3);
+      ctx.fillStyle = '#d63636';
+      ctx.fillRect(-this.r, -this.r - 12, this.r * 2 * (this.hp / this.maxHp), 3);
+    }
+    ctx.restore();
+  }
+}
+
 // =====================================================================
 // 描画ヘルパー
 // =====================================================================
@@ -1243,7 +2245,8 @@ function drawHeldWeapon(ctx, weapon, fx, fy, options) {
     drawSword(ctx, 0, yOff, 20);
   } else if (weapon === 'shield' && !options.shieldGone) {
     ctx.rotate(ang + Math.PI / 2);
-    drawShield(ctx, 0, -18, options.blocking ? 17 : 13);
+    // 構え中は一回り大きく、より前方に。視認性アップ
+    drawShield(ctx, 0, options.blocking ? -26 : -18, options.blocking ? 19 : 13);
   } else if (weapon === 'hammer') {
     ctx.rotate(ang + Math.PI / 2 + (options.hammerSwing || 0));
     drawHammer(ctx, 0, -14, 20);
@@ -1266,9 +2269,18 @@ function drawHero(ctx, x, y, weapon, facing, bobOffset, options = {}) {
     drawHammer(ctx, 0, -28, 20);
     ctx.restore();
   }
+  // 剣回転モード（強化）
+  if (weapon === 'sword' && options.swordSpinning) {
+    ctx.save();
+    ctx.rotate(options.swordSpinAngle || 0);
+    drawSword(ctx, 0, -34, 22);
+    ctx.restore();
+  }
 
-  // 上向きのとき武器を体の後ろに
-  if (facingUp && !(weapon === 'hammer' && options.spinning)) {
+  // 上向きのとき武器を体の後ろに（盾だけは常に体の前に描いて見えるようにする）
+  const isSpinning = (weapon === 'hammer' && options.spinning) ||
+                     (weapon === 'sword' && options.swordSpinning);
+  if (facingUp && !isSpinning && weapon !== 'shield') {
     drawHeldWeapon(ctx, weapon, fx, fy, options);
   }
 
@@ -1373,8 +2385,8 @@ function drawHero(ctx, x, y, weapon, facing, bobOffset, options = {}) {
   ctx.fillRect(-7 + eyeOffX, slitY - 0.5 + eyeOffY, 3, 2);
   ctx.fillRect(4 + eyeOffX, slitY - 0.5 + eyeOffY, 3, 2);
 
-  // 武器を体の前に
-  if (!facingUp && !(weapon === 'hammer' && options.spinning)) {
+  // 武器を体の前に（盾は上向きでも見えるように常にここで描く）
+  if ((!facingUp || weapon === 'shield') && !isSpinning) {
     drawHeldWeapon(ctx, weapon, fx, fy, options);
   }
 
@@ -1449,7 +2461,7 @@ function drawWeaponSelect(dt) {
     const desc = {
       sword: '剣: 近距離 (3) / 2秒長押しで斬撃 (4)',
       shield: '盾: 構えて反射 (2) / 長押し投げ (5)',
-      hammer: 'ハンマー: 範囲攻撃 (5、1秒溜め) / 長押しで回転攻撃 (2連続)',
+      hammer: 'ハンマー: 範囲攻撃 (5、1秒溜め) / 長押しで回転攻撃 (1連続)',
     }[selectedWeapon];
     ctx.fillStyle = '#333';
     ctx.font = '16px sans-serif';
@@ -1541,8 +2553,8 @@ function drawHUD() {
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 14px sans-serif';
     ctx.textAlign = 'center';
-    const bossName = ['剣のボス', '弓のボス', 'ハンマーのボス'][stageIndex];
-    ctx.fillText(`STAGE ${stageIndex + 1} / 3   ${bossName}`, W / 2, by + bh + 16);
+    const bossName = ['剣のボス', '弓のボス', 'ハンマーのボス', 'ラスボス'][stageIndex];
+    ctx.fillText(`STAGE ${stageIndex + 1} / 4   ${bossName}`, W / 2, by + bh + 16);
   }
   // 武器アイコン
   ctx.save();
@@ -1552,6 +2564,15 @@ function drawHUD() {
   if (player.weapon === 'sword') drawSword(ctx, 0, 12, 22);
   if (player.weapon === 'shield') drawShield(ctx, 0, -4, 16);
   if (player.weapon === 'hammer') drawHammer(ctx, 0, 16, 22);
+  if (upgrades[player.weapon]) {
+    ctx.fillStyle = '#ffd040';
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1.5;
+    ctx.font = 'bold 18px serif';
+    ctx.textAlign = 'center';
+    ctx.strokeText('★', 22, -18);
+    ctx.fillText('★', 22, -18);
+  }
   ctx.restore();
 
   // 残機（ハート）
@@ -1559,6 +2580,15 @@ function drawHUD() {
   for (let i = 0; i < 3; i++) {
     drawHeart(ctx, 110 + i * 28, 60, 10, i < player.lives);
   }
+  ctx.restore();
+
+  // コイン表示
+  ctx.save();
+  drawCoin(ctx, 60, 110, 12);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`x ${coins}`, 78, 116);
   ctx.restore();
 
   // チャージインジケータ
@@ -1613,6 +2643,8 @@ function drawPlayer() {
     shieldGone: player.shieldThrown,
     spinning: player.hammerSpinning,
     spinAngle: player.hammerSpinAngle,
+    swordSpinning: player.swordSpinning,
+    swordSpinAngle: player.swordSpinAngle,
     hammerSwing: player.hammerSwing > 0 ? -0.6 : 0,
     swordSlashing: player.swordSlash > 0,
   });
@@ -1627,6 +2659,17 @@ function drawPlayer() {
     ctx.globalAlpha = player.swordSlash / 0.22;
     ctx.beginPath();
     ctx.arc(20, 0, 28, -1, 1);
+    ctx.stroke();
+    ctx.restore();
+  }
+  // 剣回転エフェクト
+  if (player.swordSpinning) {
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    ctx.strokeStyle = 'rgba(140, 200, 255, 0.4)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, 42, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
@@ -1721,6 +2764,8 @@ function drawEffects() {
 // =====================================================================
 function startGame() {
   stageIndex = 0;
+  coins = 0;
+  upgrades = { sword: false, shield: false, hammer: false };
   player = new Player(selectedWeapon);
   startStage(0);
 }
@@ -1729,15 +2774,29 @@ function startStage(idx) {
   stageIndex = idx;
   projectiles = [];
   effects = [];
+  minions = [];
   const type = stages[idx];
   if (type === 'sword') boss = new SwordBoss();
   else if (type === 'bow') boss = new BowBoss();
   else if (type === 'hammer') boss = new HammerBoss();
+  else if (type === 'bomb') boss = new BombBoss();
   // プレイヤー位置リセット
   player.x = CENTER.x;
   player.y = CENTER.y + 200;
   player.invuln = 1.2;
   player.alive = true;
+  player.attackCooldown = 0;
+  // 武器の一時状態もリセット（投擲中の盾がフィールドに残らないように）
+  player.swordCharge = 0;
+  player.swordSlash = 0;
+  player.blocking = false;
+  player.shieldThrown = false;
+  player.shieldProj = null;
+  player.hammerWindup = 0;
+  player.hammerSwing = 0;
+  player.hammerSpinning = false;
+  player.swordSpinning = false;
+  player.spinHitCooldown = 0;
   // 状態
   state = 'BOSS_INTRO';
   stateTimer = 1.6;
@@ -1750,6 +2809,7 @@ function resetToWeaponSelect() {
   boss = null;
   projectiles = [];
   effects = [];
+  minions = [];
   stageIndex = 0;
 }
 
@@ -1757,6 +2817,8 @@ function updateBattle(dt) {
   if (spaceDown) spaceHeldDuration += dt;
   player.update(dt);
   boss.update(dt);
+  for (const m of minions) m.update(dt);
+  minions = minions.filter(m => m.alive);
   for (const p of projectiles) p.update(dt);
   projectiles = projectiles.filter(p => p.alive);
   updateEffects(dt);
@@ -1767,6 +2829,7 @@ function updateBattle(dt) {
     return;
   }
   if (!boss.alive) {
+    coins += COIN_REWARD;
     state = 'BOSS_DEAD';
     stateTimer = 2.0;
     return;
@@ -1775,8 +2838,9 @@ function updateBattle(dt) {
 
 function drawBattle() {
   drawArena();
-  // 描画順: ボス -> プレイヤー -> 弾 -> エフェクト -> HUD
+  // 描画順: ボス -> 子分 -> プレイヤー -> 弾 -> エフェクト -> HUD
   boss && boss.draw(ctx);
+  for (const m of minions) m.draw(ctx);
   drawPlayer();
   for (const p of projectiles) p.draw(ctx);
   drawEffects();
@@ -1797,12 +2861,174 @@ function drawBossIntro() {
   ctx.textAlign = 'center';
   ctx.fillText(`STAGE ${stageIndex + 1}`, W / 2, 270);
   ctx.font = 'bold 36px serif';
-  const names = ['剣のボス', '弓のボス', 'ハンマーのボス'];
+  const names = ['剣のボス', '弓のボス', 'ハンマーのボス', 'ラスボス'];
   ctx.fillText(names[stageIndex], W / 2, 330);
   ctx.font = '18px sans-serif';
   ctx.fillStyle = `rgba(255, 240, 200, ${a})`;
   ctx.fillText('まもなく開始...', W / 2, 370);
   ctx.restore();
+}
+
+function drawCoin(ctx, x, y, size) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = '#f0c040';
+  ctx.strokeStyle = '#8a5a18';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(0, 0, size, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#fff5b0';
+  ctx.beginPath();
+  ctx.arc(-size * 0.3, -size * 0.3, size * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#8a5a18';
+  ctx.font = `bold ${Math.round(size * 1.1)}px serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('円', 0, 1);
+  ctx.textBaseline = 'alphabetic';
+  ctx.restore();
+}
+
+function shopBuyButton() {
+  return { x: W / 2 - 90, y: 430, w: 180, h: 50 };
+}
+function shopContinueButton() {
+  return { x: W / 2 - 110, y: 560, w: 220, h: 60 };
+}
+
+const UPGRADE_DESC = {
+  sword: '長押しで剣が回転攻撃、放すとランダム方向へ斬撃',
+  shield: '投げた盾が壁・敵に当たると反射してさらに攻撃',
+  hammer: '回転中、近くの飛び道具をランダム方向へ反射',
+};
+const WEAPON_LABEL = { sword: '剣', shield: '盾', hammer: 'ハンマー' };
+
+function drawShop() {
+  ctx.fillStyle = '#fafafa';
+  ctx.fillRect(0, 0, W, H);
+  // 床のグラデ
+  const grd = ctx.createLinearGradient(0, H * 0.7, 0, H);
+  grd.addColorStop(0, 'rgba(0,0,0,0)');
+  grd.addColorStop(1, 'rgba(0,0,0,0.08)');
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, H * 0.7, W, H * 0.3);
+
+  // タイトル
+  ctx.fillStyle = '#222';
+  ctx.font = 'bold 38px serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('武器強化ショップ', W / 2, 70);
+  ctx.font = '16px sans-serif';
+  ctx.fillStyle = '#555';
+  ctx.fillText(`STAGE ${stageIndex + 1} クリア！`, W / 2, 96);
+
+  // 所持金
+  drawCoin(ctx, W / 2 - 36, 140, 18);
+  ctx.fillStyle = '#222';
+  ctx.font = 'bold 28px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`x ${coins}`, W / 2 - 10, 150);
+
+  // 武器カード
+  const cardX = W / 2 - 170, cardY = 200, cardW = 340, cardH = 200;
+  const upgraded = upgrades[selectedWeapon];
+  ctx.fillStyle = upgraded ? '#fff7d0' : '#fff';
+  ctx.strokeStyle = upgraded ? '#e0b020' : '#aaa';
+  ctx.lineWidth = upgraded ? 4 : 2;
+  roundRect(ctx, cardX, cardY, cardW, cardH, 12);
+  ctx.fill(); ctx.stroke();
+
+  // 武器名
+  ctx.fillStyle = '#222';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(WEAPON_LABEL[selectedWeapon], cardX + cardW / 2, cardY + 32);
+  // アイコン
+  const ix = cardX + 70, iy = cardY + 110;
+  if (selectedWeapon === 'sword') drawSword(ctx, ix, iy + 22, 38);
+  else if (selectedWeapon === 'shield') drawShield(ctx, ix, iy, 28);
+  else if (selectedWeapon === 'hammer') drawHammer(ctx, ix, iy + 22, 38);
+  if (upgraded) {
+    ctx.fillStyle = '#e0b020';
+    ctx.font = 'bold 24px serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('★', ix + 30, iy - 22);
+  }
+  // 説明
+  ctx.fillStyle = '#444';
+  ctx.font = '14px sans-serif';
+  ctx.textAlign = 'left';
+  wrapText(ctx, UPGRADE_DESC[selectedWeapon], cardX + 130, cardY + 80, cardW - 145, 20);
+
+  // 購入ボタン or 強化済み表示
+  const cost = UPGRADE_COST[selectedWeapon];
+  const buyBtn = shopBuyButton();
+  if (upgraded) {
+    ctx.fillStyle = '#daa030';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('★ 強化済み ★', buyBtn.x + buyBtn.w / 2, buyBtn.y + buyBtn.h / 2 + 8);
+  } else {
+    const canAfford = coins >= cost;
+    const hover = mouse.x >= buyBtn.x && mouse.x <= buyBtn.x + buyBtn.w &&
+                  mouse.y >= buyBtn.y && mouse.y <= buyBtn.y + buyBtn.h;
+    if (canAfford) {
+      ctx.fillStyle = hover ? '#3a9050' : '#4abf65';
+      ctx.strokeStyle = '#2c7a40';
+    } else {
+      ctx.fillStyle = '#ccc';
+      ctx.strokeStyle = '#999';
+    }
+    ctx.lineWidth = 3;
+    roundRect(ctx, buyBtn.x, buyBtn.y, buyBtn.w, buyBtn.h, 10);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`購入 (${cost} 円)`, buyBtn.x + buyBtn.w / 2, buyBtn.y + buyBtn.h / 2);
+    ctx.textBaseline = 'alphabetic';
+    if (!canAfford) {
+      ctx.fillStyle = '#a00';
+      ctx.font = '14px sans-serif';
+      ctx.fillText('お金が足りないよ', buyBtn.x + buyBtn.w / 2, buyBtn.y + buyBtn.h + 22);
+    }
+  }
+
+  // 次へボタン
+  const contBtn = shopContinueButton();
+  const cHover = mouse.x >= contBtn.x && mouse.x <= contBtn.x + contBtn.w &&
+                 mouse.y >= contBtn.y && mouse.y <= contBtn.y + contBtn.h;
+  ctx.fillStyle = cHover ? '#3a6090' : '#4a80b0';
+  ctx.strokeStyle = '#1c3a5c';
+  ctx.lineWidth = 3;
+  roundRect(ctx, contBtn.x, contBtn.y, contBtn.w, contBtn.h, 16);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('次のステージへ', contBtn.x + contBtn.w / 2, contBtn.y + contBtn.h / 2);
+  ctx.textBaseline = 'alphabetic';
+}
+
+function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+  const chars = text.split('');
+  let line = '';
+  let cy = y;
+  for (const c of chars) {
+    const test = line + c;
+    if (ctx.measureText(test).width > maxWidth && line.length) {
+      ctx.fillText(line, x, cy);
+      line = c;
+      cy += lineHeight;
+    } else {
+      line = test;
+    }
+  }
+  if (line.length) ctx.fillText(line, x, cy);
 }
 
 function drawGameOver() {
@@ -1829,7 +3055,7 @@ function drawVictory() {
   ctx.fillText('VICTORY!', W / 2, H / 2 - 30);
   ctx.fillStyle = '#333';
   ctx.font = '24px sans-serif';
-  ctx.fillText('3体のボスを倒した！', W / 2, H / 2 + 10);
+  ctx.fillText('4体のボスを倒した！', W / 2, H / 2 + 10);
   ctx.font = '18px sans-serif';
   ctx.fillText('Enterキー または クリックで タイトルへ', W / 2, H / 2 + 50);
 }
@@ -1858,9 +3084,11 @@ function loop(now) {
       if (stageIndex + 1 >= stages.length) {
         state = 'VICTORY';
       } else {
-        startStage(stageIndex + 1);
+        state = 'SHOP';
       }
     }
+  } else if (state === 'SHOP') {
+    drawShop();
   } else if (state === 'GAME_OVER') {
     drawGameOver();
   } else if (state === 'VICTORY') {

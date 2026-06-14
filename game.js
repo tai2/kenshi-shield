@@ -29,6 +29,18 @@ let noHitRun = true;
 const UPGRADE_COST = { hammer: 2, shield: 4, sword: 6 };
 const COIN_REWARD = 2;
 
+// アイテム: ショップで購入してバトル中にBキーで使用、Vキーで選択切替
+const ITEM_ORDER = ['poison', 'potion', 'bigPotion', 'weaponSwap'];
+const ITEMS = {
+  poison:     { name: 'ポイズン',         cost: 1, color: '#7a4ab8', label: '毒', desc: 'ボス: 1秒1ダメ × 8秒' },
+  potion:     { name: '回復ポーション',   cost: 1, color: '#d63636', label: '回', desc: '残機 +1' },
+  bigPotion:  { name: 'ビッグポーション', cost: 2, color: '#a01818', label: '大', desc: '残機 満タン' },
+  weaponSwap: { name: '武器変更',         cost: 2, color: '#3a7ab8', label: '替', desc: '武器がランダム変更' },
+};
+const POISON_DURATION = 8; // 1回の使用で 8 秒 (= 8 ダメ)
+let inventory = { poison: 0, potion: 0, bigPotion: 0, weaponSwap: 0 };
+let selectedItem = 'poison';
+
 // ボス + 生存中の子分すべてを攻撃対象として返す。復活演出中の無敵は除外。
 function aliveEnemies() {
   const list = [];
@@ -64,6 +76,14 @@ window.addEventListener('keydown', (e) => {
     } else if (state === 'SHOP') {
       startStage(stageIndex + 1);
     }
+  }
+  if (e.code === 'KeyB' && state === 'BATTLE') {
+    useSelectedItem();
+    e.preventDefault();
+  }
+  if (e.code === 'KeyV' && state === 'BATTLE') {
+    cycleSelectedItem();
+    e.preventDefault();
   }
 });
 window.addEventListener('keyup', (e) => {
@@ -120,6 +140,17 @@ function handleClick() {
       coins -= cost;
       upgrades[selectedWeapon] = true;
       return;
+    }
+    // アイテム購入
+    for (const r of shopItemRects()) {
+      const item = ITEMS[r.id];
+      if (coins >= item.cost &&
+          mouse.x >= r.x && mouse.x <= r.x + r.w &&
+          mouse.y >= r.y && mouse.y <= r.y + r.h) {
+        coins -= item.cost;
+        inventory[r.id]++;
+        return;
+      }
     }
     const contBtn = shopContinueButton();
     if (mouse.x >= contBtn.x && mouse.x <= contBtn.x + contBtn.w &&
@@ -3229,6 +3260,36 @@ function drawHUD() {
   ctx.fillText(`x ${coins}`, 78, 116);
   ctx.restore();
 
+  // 所持アイテム
+  const ownedItems = ITEM_ORDER.filter(it => inventory[it] > 0);
+  if (ownedItems.length) {
+    ctx.save();
+    let ix = 60;
+    const iy = 150;
+    for (const id of ITEM_ORDER) {
+      if (!inventory[id]) continue;
+      const isSel = id === selectedItem;
+      if (isSel) {
+        ctx.fillStyle = 'rgba(255, 220, 80, 0.35)';
+        ctx.strokeStyle = '#ffd040';
+        ctx.lineWidth = 2;
+        roundRect(ctx, ix - 4, iy - 14, 50, 30, 6);
+        ctx.fill(); ctx.stroke();
+      }
+      drawItemIcon(ctx, ix + 10, iy + 1, id, 11);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(`x${inventory[id]}`, ix + 24, iy + 6);
+      ix += 54;
+    }
+    ctx.fillStyle = '#ddd';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('B:使用 V:切替', 60, iy + 30);
+    ctx.restore();
+  }
+
   // チャージインジケータ
   if (player.weapon === 'sword' && player.swordCharge > 0) {
     drawChargeBar(player.swordCharge / 2.0, player.swordCharge >= 2.0);
@@ -3406,8 +3467,67 @@ function startGame() {
   upgrades = { sword: false, shield: false, hammer: false };
   stages = ['sword', 'bow', 'hammer', 'bomb'];
   noHitRun = true;
+  inventory = { poison: 0, potion: 0, bigPotion: 0, weaponSwap: 0 };
+  selectedItem = 'poison';
   player = new Player(selectedWeapon);
   startStage(0);
+}
+
+// ---- アイテム操作 ------------------------------------------------------
+function cycleSelectedItem() {
+  const owned = ITEM_ORDER.filter(it => inventory[it] > 0);
+  if (!owned.length) { selectedItem = ITEM_ORDER[0]; return; }
+  const idx = owned.indexOf(selectedItem);
+  selectedItem = owned[(idx + 1) % owned.length];
+}
+
+function useSelectedItem() {
+  if (!inventory[selectedItem]) {
+    cycleSelectedItem();
+    if (!inventory[selectedItem]) return;
+  }
+  const id = selectedItem;
+  inventory[id]--;
+  applyItem(id);
+  if (!inventory[id]) cycleSelectedItem();
+}
+
+function applyItem(id) {
+  if (id === 'poison') {
+    if (boss && boss.alive) {
+      boss.poisonTimer = (boss.poisonTimer || 0) + POISON_DURATION;
+      if (boss.poisonTick === undefined) boss.poisonTick = 1;
+      effects.push({ type: 'spark', x: boss.x, y: boss.y, life: 0.5 });
+    }
+  } else if (id === 'potion') {
+    if (player && player.alive && player.lives < 3) {
+      player.lives++;
+      effects.push({ type: 'spark', x: player.x, y: player.y, life: 0.4 });
+    }
+  } else if (id === 'bigPotion') {
+    if (player && player.alive) {
+      player.lives = 3;
+      effects.push({ type: 'spark', x: player.x, y: player.y, life: 0.5 });
+    }
+  } else if (id === 'weaponSwap') {
+    if (player && player.alive) {
+      const others = ['sword', 'shield', 'hammer'].filter(w => w !== player.weapon);
+      player.weapon = others[Math.floor(Math.random() * others.length)];
+      // 武器系の一時状態を初期化（投擲中の盾などが残らないように）
+      player.swordCharge = 0;
+      player.swordSlash = 0;
+      player.swordSpinning = false;
+      player.blocking = false;
+      player.shieldThrown = false;
+      player.shieldProj = null;
+      player.hammerWindup = 0;
+      player.hammerSwing = 0;
+      player.hammerSpinning = false;
+      player.spinHitCooldown = 0;
+      player.attackCooldown = 0;
+      effects.push({ type: 'spark', x: player.x, y: player.y, life: 0.5 });
+    }
+  }
 }
 
 function startStage(idx) {
@@ -3456,12 +3576,24 @@ function resetToWeaponSelect() {
   stageIndex = 0;
   stages = ['sword', 'bow', 'hammer', 'bomb'];
   noHitRun = true;
+  inventory = { poison: 0, potion: 0, bigPotion: 0, weaponSwap: 0 };
+  selectedItem = 'poison';
 }
 
 function updateBattle(dt) {
   if (spaceDown) spaceHeldDuration += dt;
   player.update(dt);
   boss.update(dt);
+  // ポイズンのスリップダメージ（1秒に1ダメ）
+  if (boss.alive && (boss.poisonTimer || 0) > 0) {
+    boss.poisonTimer -= dt;
+    boss.poisonTick = (boss.poisonTick || 0) - dt;
+    if (boss.poisonTick <= 0) {
+      boss.takeDamage(1);
+      boss.poisonTick = 1;
+      effects.push({ type: 'spark', x: boss.x, y: boss.y, life: 0.2 });
+    }
+  }
   for (const m of minions) m.update(dt);
   minions = minions.filter(m => m.alive);
   for (const p of projectiles) p.update(dt);
@@ -3484,6 +3616,13 @@ function updateBattle(dt) {
 function drawBattle() {
   drawArena();
   // 描画順: ボス -> 子分 -> プレイヤー -> 弾 -> エフェクト -> HUD
+  if (boss && boss.alive && (boss.poisonTimer || 0) > 0) {
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 120);
+    ctx.fillStyle = `rgba(120, 220, 60, ${0.15 + pulse * 0.18})`;
+    ctx.beginPath();
+    ctx.arc(boss.x, boss.y, (boss.r || 32) + 10 + pulse * 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
   boss && boss.draw(ctx);
   for (const m of minions) m.draw(ctx);
   drawPlayer();
@@ -3538,10 +3677,39 @@ function drawCoin(ctx, x, y, size) {
 }
 
 function shopBuyButton() {
-  return { x: W / 2 - 90, y: 430, w: 180, h: 50 };
+  return { x: W / 2 - 90, y: 350, w: 180, h: 44 };
 }
 function shopContinueButton() {
-  return { x: W / 2 - 110, y: 560, w: 220, h: 60 };
+  return { x: W / 2 - 110, y: 580, w: 220, h: 60 };
+}
+function shopItemRects() {
+  const cellW = 200, cellH = 100, gap = 10;
+  const totalW = cellW * ITEM_ORDER.length + gap * (ITEM_ORDER.length - 1);
+  const baseX = (W - totalW) / 2;
+  const baseY = 450;
+  return ITEM_ORDER.map((id, i) => ({
+    id, x: baseX + i * (cellW + gap), y: baseY, w: cellW, h: cellH,
+  }));
+}
+
+// アイテムアイコン（HUD・ショップ共用）
+function drawItemIcon(ctx, x, y, id, r) {
+  const item = ITEMS[id];
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = item.color;
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.round(r * 1.25)}px serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(item.label, 0, 1);
+  ctx.textBaseline = 'alphabetic';
+  ctx.restore();
 }
 
 const UPGRADE_DESC = {
@@ -3578,7 +3746,7 @@ function drawShop() {
   ctx.fillText(`x ${coins}`, W / 2 - 10, 150);
 
   // 武器カード
-  const cardX = W / 2 - 170, cardY = 200, cardW = 340, cardH = 200;
+  const cardX = W / 2 - 170, cardY = 170, cardW = 340, cardH = 160;
   const upgraded = upgrades[selectedWeapon];
   ctx.fillStyle = upgraded ? '#fff7d0' : '#fff';
   ctx.strokeStyle = upgraded ? '#e0b020' : '#aaa';
@@ -3638,8 +3806,57 @@ function drawShop() {
     ctx.textBaseline = 'alphabetic';
     if (!canAfford) {
       ctx.fillStyle = '#a00';
-      ctx.font = '14px sans-serif';
-      ctx.fillText('お金が足りないよ', buyBtn.x + buyBtn.w / 2, buyBtn.y + buyBtn.h + 22);
+      ctx.font = '12px sans-serif';
+      ctx.fillText('お金が足りないよ', buyBtn.x + buyBtn.w / 2, buyBtn.y - 6);
+    }
+  }
+
+  // アイテム購入セクション
+  ctx.fillStyle = '#222';
+  ctx.font = 'bold 22px serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('アイテム', W / 2, 430);
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = '#666';
+  ctx.fillText('（バトル中 B:使用 V:切替）', W / 2, 446);
+
+  for (const r of shopItemRects()) {
+    const item = ITEMS[r.id];
+    const canAfford = coins >= item.cost;
+    const hover = mouse.x >= r.x && mouse.x <= r.x + r.w &&
+                  mouse.y >= r.y && mouse.y <= r.y + r.h;
+    if (canAfford) {
+      ctx.fillStyle = hover ? '#ffe890' : '#fff7d0';
+      ctx.strokeStyle = '#daa030';
+    } else {
+      ctx.fillStyle = '#eee';
+      ctx.strokeStyle = '#aaa';
+    }
+    ctx.lineWidth = 2;
+    roundRect(ctx, r.x, r.y, r.w, r.h, 10);
+    ctx.fill(); ctx.stroke();
+    // アイコン
+    drawItemIcon(ctx, r.x + 26, r.y + 28, r.id, 16);
+    // 名前
+    ctx.fillStyle = '#222';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(item.name, r.x + 50, r.y + 24);
+    // 説明
+    ctx.fillStyle = '#444';
+    ctx.font = '11px sans-serif';
+    wrapText(ctx, item.desc, r.x + 12, r.y + 58, r.w - 24, 14);
+    // 価格
+    ctx.fillStyle = canAfford ? '#2c7a40' : '#888';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(`${item.cost}円`, r.x + r.w - 10, r.y + 24);
+    // 所持数
+    if (inventory[r.id]) {
+      ctx.fillStyle = '#3a7ab8';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(`所持 x${inventory[r.id]}`, r.x + r.w - 10, r.y + r.h - 8);
     }
   }
 

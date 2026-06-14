@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>剣士シールド — チラシ</title>
+<style>
+  /* ===== A4印刷設定 ===== */
+  @page { size: A4 portrait; margin: 0; }
+
+  :root{
+    --ink:#1a1a1a;        /* 太い黒の輪郭 */
+    --cream:#fdf5e1;      /* クリームの塗り */
+    --silver:#d4d4dc;     /* シルバー */
+    --red:#d83030;        /* 赤十字・ハート */
+    --gold:#ffd040;       /* ゴールド */
+    --blue:#7ec0ff;       /* 反射ブルー */
+    --paper:#fff8e6;
+    --sky1:#2a3a6a;
+    --sky2:#5a7ad0;
+  }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+
+  html,body{
+    background:#444;
+    font-family:"Hiragino Maru Gothic ProN","Hiragino Sans","Yu Gothic",sans-serif;
+    color:var(--ink);
+    -webkit-print-color-adjust:exact;
+    print-color-adjust:exact;
+  }
+
+  /* A4ページ本体 */
+  .page{
+    width:210mm;
+    height:297mm;
+    margin:10mm auto;
+    position:relative;
+    overflow:hidden;
+    background:
+      radial-gradient(circle at 50% 18%, #6a8ae0 0%, var(--sky1) 70%);
+    box-shadow:0 6px 30px rgba(0,0,0,.5);
+  }
+
+  /* 印刷時は影や外側余白を消す。高さをA4より僅かに小さくして
+     端数のはみ出しによる空白2ページ目を防ぐ */
+  @media print{
+    html,body{ background:#fff; width:210mm; height:auto; }
+    .page{
+      margin:0 !important;
+      width:210mm;
+      height:296mm;     /* 297mmちょうどだと端数で溢れるため少し縮める */
+      box-shadow:none;
+      page-break-after:avoid;
+      page-break-inside:avoid;
+      overflow:hidden;
+    }
+  }
+
+  /* 背景の星 */
+  .stars{ position:absolute; inset:0; pointer-events:none; }
+  .star{ position:absolute; color:#fff; opacity:.55; }
+
+  /* 太枠 */
+  .frame{
+    position:absolute; inset:7mm;
+    border:4px solid var(--ink);
+    border-radius:10px;
+    box-shadow:inset 0 0 0 4px var(--gold), 0 0 0 4px rgba(0,0,0,.15);
+    padding:8mm 7mm;
+    background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(0,0,0,.10));
+    display:flex; flex-direction:column;
+  }
+
+  /* ===== タイトル ===== */
+  .title{ text-align:center; position:relative; }
+  .title .ribbon{
+    display:inline-block;
+    background:var(--red);
+    color:#fff;
+    font-weight:800;
+    letter-spacing:2px;
+    font-size:13px;
+    padding:3px 16px;
+    border:3px solid var(--ink);
+    border-radius:20px;
+    box-shadow:2px 2px 0 var(--ink);
+  }
+  .title h1{
+    font-size:64px;
+    line-height:1;
+    margin-top:8px;
+    color:var(--gold);
+    -webkit-text-stroke:4px var(--ink);
+    paint-order:stroke fill;
+    text-shadow:5px 5px 0 var(--ink), 0 0 18px rgba(255,208,64,.5);
+    font-weight:900;
+  }
+  .title .sub{
+    margin-top:6px;
+    color:#fff;
+    font-weight:700;
+    font-size:15px;
+    text-shadow:1px 1px 0 var(--ink);
+  }
+
+  /* ===== ヒーロー＋ボス段 ===== */
+  .hero-row{
+    display:flex; align-items:center; justify-content:center;
+    gap:10px; margin-top:6px;
+  }
+  .hero-row svg{ display:block; }
+  .vs{
+    color:#fff; font-weight:900; font-size:30px;
+    -webkit-text-stroke:2px var(--ink); paint-order:stroke fill;
+    transform:rotate(-8deg);
+  }
+
+  /* 見出しバッジ */
+  .badge{
+    display:inline-block;
+    background:var(--gold);
+    border:3px solid var(--ink);
+    border-radius:8px;
+    padding:3px 14px;
+    font-weight:800;
+    font-size:15px;
+    box-shadow:2px 2px 0 var(--ink);
+    transform:rotate(-1.5deg);
+  }
+  .section-head{ text-align:center; margin:10px 0 6px; }
+
+  /* ===== 武器カード ===== */
+  .cards{ display:flex; gap:8px; justify-content:center; }
+  .card{
+    flex:1;
+    background:var(--cream);
+    border:3px solid var(--ink);
+    border-radius:10px;
+    box-shadow:3px 3px 0 var(--ink);
+    padding:8px 6px 9px;
+    text-align:center;
+  }
+  .card svg{ display:block; margin:0 auto; }
+  .card .wname{ font-weight:800; font-size:17px; margin-top:2px; }
+  .card .wdesc{ font-size:11px; color:#3a3a3a; margin-top:3px; line-height:1.35; }
+
+  /* ===== ボスギャラリー ===== */
+  .bosses{ display:flex; gap:6px; justify-content:center; margin-top:2px; }
+  .boss{
+    flex:1;
+    background:rgba(255,255,255,.92);
+    border:3px solid var(--ink);
+    border-radius:10px;
+    padding:6px 2px 5px;
+    text-align:center;
+    box-shadow:2px 2px 0 var(--ink);
+  }
+  .boss svg{ display:block; margin:0 auto; }
+  .boss .bn{ font-size:11px; font-weight:800; margin-top:1px; }
+  .boss.secret{ background:#2a2440; }
+  .boss.secret .bn{ color:var(--gold); }
+
+  /* ===== 下段: あそびかた + QR ===== */
+  .bottom{
+    margin-top:auto;
+    display:flex; gap:10px; align-items:stretch;
+  }
+  .howto{
+    flex:1.3;
+    background:var(--cream);
+    border:3px solid var(--ink);
+    border-radius:10px;
+    box-shadow:3px 3px 0 var(--ink);
+    padding:9px 12px;
+  }
+  .howto h3{ font-size:15px; margin-bottom:5px; }
+  .howto .keyline{ display:flex; align-items:center; gap:8px; margin:5px 0; font-size:12.5px; font-weight:600; }
+  .key{
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:24px; height:24px; padding:0 7px;
+    background:#fff; border:2.5px solid var(--ink); border-radius:6px;
+    box-shadow:1.5px 1.5px 0 var(--ink); font-weight:800; font-size:12px;
+  }
+  .howto .note{ font-size:11px; color:#555; margin-top:6px; line-height:1.4; }
+
+  .qrbox{
+    flex:1;
+    background:#fff;
+    border:3px solid var(--ink);
+    border-radius:10px;
+    box-shadow:3px 3px 0 var(--ink);
+    padding:8px;
+    text-align:center;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+  }
+  .qrbox .qlabel{ font-weight:800; font-size:13px; margin-bottom:4px; }
+  .qrbox img{
+    width:120px; height:120px;
+    image-rendering:pixelated;
+    border:3px solid var(--ink); border-radius:4px;
+    background:#fff;
+  }
+  .qrbox .play{
+    margin-top:5px; font-size:11px; font-weight:700; color:#333;
+  }
+  .qrbox .free{
+    margin-top:3px; display:inline-block;
+    background:var(--red); color:#fff; font-weight:800; font-size:11px;
+    padding:2px 10px; border-radius:12px; border:2px solid var(--ink);
+  }
+
+  .footer{
+    text-align:center; color:#fff; font-size:10.5px; margin-top:7px;
+    text-shadow:1px 1px 0 var(--ink); font-weight:600;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- 背景の星 -->
+  <div class="stars">
+    <div class="star" style="top:6%;left:12%;font-size:18px">✦</div>
+    <div class="star" style="top:10%;left:84%;font-size:22px">✦</div>
+    <div class="star" style="top:30%;left:6%;font-size:14px">✦</div>
+    <div class="star" style="top:24%;left:92%;font-size:12px">✦</div>
+    <div class="star" style="top:46%;left:90%;font-size:16px">✦</div>
+    <div class="star" style="top:54%;left:4%;font-size:12px">✦</div>
+    <div class="star" style="top:4%;left:48%;font-size:10px">✦</div>
+  </div>
+
+  <div class="frame">
+
+    <!-- タイトル -->
+    <div class="title">
+      <span class="ribbon">2D ボスバトル・ブラウザゲーム</span>
+      <h1>剣士シールド</h1>
+      <div class="sub">親子で作った手描きアクション。ボスをぜんぶ倒せ！</div>
+    </div>
+
+    <!-- ヒーロー vs ボス -->
+    <div class="hero-row">
+      <!-- 主人公（西洋騎士） -->
+      <svg width="120" height="150" viewBox="0 0 120 150" aria-label="主人公">
+        <g stroke="#1a1a1a" stroke-width="2.5" stroke-linejoin="round">
+          <!-- 脚 -->
+          <rect x="46" y="116" width="11" height="20" rx="3" fill="#5a4636"/>
+          <rect x="63" y="116" width="11" height="20" rx="3" fill="#5a4636"/>
+          <ellipse cx="49" cy="139" rx="9" ry="5" fill="#7a4f20"/>
+          <ellipse cx="71" cy="139" rx="9" ry="5" fill="#7a4f20"/>
+          <!-- 胴（胸当て） -->
+          <rect x="40" y="70" width="40" height="50" rx="10" fill="#d4d4dc"/>
+          <!-- 赤十字 -->
+          <rect x="56" y="80" width="8" height="30" fill="#d83030" stroke-width="2"/>
+          <rect x="48" y="90" width="24" height="8" fill="#d83030" stroke-width="2"/>
+          <!-- 手 -->
+          <circle cx="34" cy="92" r="10" fill="#d4d4dc"/>
+          <circle cx="86" cy="92" r="10" fill="#d4d4dc"/>
+          <!-- 兜 -->
+          <path d="M38 58 q22 -34 44 0 v6 q-22 10 -44 0 z" fill="#e6e6ee"/>
+          <!-- スリットと目 -->
+          <rect x="44" y="44" width="32" height="9" rx="4" fill="#1a1a1a" stroke="none"/>
+          <rect x="50" y="46" width="6" height="5" fill="#7ec0ff" stroke="none"/>
+          <rect x="64" y="46" width="6" height="5" fill="#7ec0ff" stroke="none"/>
+          <!-- プルーム -->
+          <path d="M60 24 q-7 -16 4 -20 q8 6 2 18 z" fill="#d83030"/>
+        </g>
+        <!-- 剣（前に構える） -->
+        <g stroke="#1a1a1a" stroke-width="2.5" stroke-linejoin="round">
+          <rect x="96" y="60" width="6" height="44" rx="2" fill="#eaeaf0"/>
+          <rect x="91" y="100" width="16" height="6" rx="2" fill="#d4a040"/>
+          <rect x="96" y="106" width="6" height="12" rx="2" fill="#7a4f20"/>
+        </g>
+      </svg>
+
+      <div class="vs">VS</div>
+
+      <!-- 爆弾ボス（ラスボス）大きめ -->
+      <svg width="120" height="130" viewBox="0 0 120 130" aria-label="ラスボス">
+        <g stroke="#1a1a1a" stroke-width="2.5" stroke-linejoin="round">
+          <!-- 導火線 -->
+          <path d="M60 24 q14 -14 20 -2" fill="none"/>
+          <circle cx="82" cy="20" r="5" fill="#ff8030" stroke="none"/>
+          <circle cx="82" cy="20" r="9" fill="none" stroke="#ffd040" stroke-width="2"/>
+          <!-- 本体 -->
+          <circle cx="58" cy="74" r="44" fill="#3a3a44"/>
+          <!-- ハイライト -->
+          <circle cx="44" cy="60" r="10" fill="rgba(255,255,255,.18)" stroke="none"/>
+          <!-- 怒り目 -->
+          <path d="M40 64 l16 6 -2 9 -16 -6 z" fill="#fff"/>
+          <path d="M78 64 l-16 6 2 9 16 -6 z" fill="#fff"/>
+          <circle cx="48" cy="71" r="4" fill="#1a1a1a" stroke="none"/>
+          <circle cx="70" cy="71" r="4" fill="#1a1a1a" stroke="none"/>
+          <!-- ジグザグ歯 -->
+          <path d="M42 88 l6 7 6 -7 6 7 6 -7 6 7 6 -7" fill="none" stroke-width="2.5"/>
+        </g>
+      </svg>
+    </div>
+
+    <!-- 武器 -->
+    <div class="section-head"><span class="badge">えらべる3つの武器</span></div>
+    <div class="cards">
+      <div class="card">
+        <svg width="46" height="60" viewBox="0 0 46 60">
+          <g stroke="#1a1a1a" stroke-width="2.5" stroke-linejoin="round">
+            <rect x="20" y="4" width="6" height="40" rx="2" fill="#eaeaf0"/>
+            <rect x="12" y="40" width="22" height="6" rx="2" fill="#d4a040"/>
+            <rect x="20" y="46" width="6" height="12" rx="2" fill="#7a4f20"/>
+          </g>
+        </svg>
+        <div class="wname">剣</div>
+        <div class="wdesc">近距離の斬り。<br>長押しで飛ぶ斬撃！</div>
+      </div>
+      <div class="card">
+        <svg width="50" height="60" viewBox="0 0 50 60">
+          <g stroke="#1a1a1a" stroke-width="2.5" stroke-linejoin="round">
+            <path d="M8 12 q17 -6 34 0 v22 q0 16 -17 22 q-17 -6 -17 -22 z" fill="#d4d4dc"/>
+            <rect x="22" y="20" width="6" height="24" fill="#d83030" stroke-width="2"/>
+            <rect x="14" y="28" width="22" height="6" fill="#d83030" stroke-width="2"/>
+            <circle cx="14" cy="16" r="2" fill="#7a4f20" stroke="none"/>
+            <circle cx="36" cy="16" r="2" fill="#7a4f20" stroke="none"/>
+          </g>
+        </svg>
+        <div class="wname">盾</div>
+        <div class="wdesc">矢をはね返す！<br>長押しで投げつけ。</div>
+      </div>
+      <div class="card">
+        <svg width="50" height="60" viewBox="0 0 50 60">
+          <g stroke="#1a1a1a" stroke-width="2.5" stroke-linejoin="round">
+            <rect x="8" y="8" width="34" height="16" rx="4" fill="#bcbcc4"/>
+            <rect x="22" y="22" width="6" height="34" rx="2" fill="#7a4f20"/>
+          </g>
+        </svg>
+        <div class="wname">ハンマー</div>
+        <div class="wdesc">広範囲の一撃！<br>長押しで回転モード。</div>
+      </div>
+    </div>
+
+    <!-- ボスギャラリー -->
+    <div class="section-head"><span class="badge">立ちはだかるボスたち</span></div>
+    <div class="bosses">
+      <!-- 剣ボス -->
+      <div class="boss">
+        <svg width="46" height="50" viewBox="0 0 46 50">
+          <g stroke="#1a1a1a" stroke-width="2" stroke-linejoin="round">
+            <path d="M23 4 l8 30 -8 8 -8 -8 z" fill="#eaeaf0"/>
+            <rect x="16" y="38" width="14" height="5" fill="#d4a040"/>
+            <rect x="14" y="16" width="6" height="5" fill="#1a1a1a" stroke="none"/>
+            <rect x="26" y="16" width="6" height="5" fill="#1a1a1a" stroke="none"/>
+            <path d="M16 26 l3 4 4 -4 4 4 3 -4" fill="none"/>
+          </g>
+        </svg>
+        <div class="bn">剣ボス</div>
+      </div>
+      <!-- 弓ボス -->
+      <div class="boss">
+        <svg width="46" height="50" viewBox="0 0 46 50">
+          <g stroke="#1a1a1a" stroke-width="2" stroke-linejoin="round" fill="none">
+            <path d="M30 8 q-20 15 0 34" stroke="#7a4f20" stroke-width="3"/>
+            <line x1="30" y1="8" x2="30" y2="42" stroke="#fdf5e1"/>
+            <line x1="14" y1="25" x2="42" y2="25" stroke="#5a3a2a"/>
+            <path d="M36 22 l8 3 -8 3 z" fill="#bcbcc4"/>
+            <circle cx="40" cy="25" r="1.4" fill="#1a1a1a" stroke="none"/>
+          </g>
+        </svg>
+        <div class="bn">弓ボス</div>
+      </div>
+      <!-- ハンマーボス -->
+      <div class="boss">
+        <svg width="46" height="50" viewBox="0 0 46 50">
+          <g stroke="#1a1a1a" stroke-width="2" stroke-linejoin="round">
+            <rect x="8" y="10" width="30" height="18" rx="4" fill="#bcbcc4"/>
+            <rect x="20" y="26" width="6" height="20" rx="2" fill="#7a4f20"/>
+            <path d="M12 16 l7 3 -1 4 -7 -3z" fill="#fff"/>
+            <path d="M34 16 l-7 3 1 4 7 -3z" fill="#fff"/>
+            <circle cx="16" cy="20" r="2" fill="#1a1a1a" stroke="none"/>
+            <circle cx="30" cy="20" r="2" fill="#1a1a1a" stroke="none"/>
+          </g>
+        </svg>
+        <div class="bn">ハンマーボス</div>
+      </div>
+      <!-- 爆弾ボス -->
+      <div class="boss">
+        <svg width="46" height="50" viewBox="0 0 46 50">
+          <g stroke="#1a1a1a" stroke-width="2" stroke-linejoin="round">
+            <path d="M23 8 q8 -8 12 -1" fill="none"/>
+            <circle cx="36" cy="6" r="3" fill="#ff8030" stroke="none"/>
+            <circle cx="22" cy="30" r="16" fill="#3a3a44"/>
+            <path d="M14 26 l8 3 -1 4 -8 -3z" fill="#fff"/>
+            <path d="M30 26 l-8 3 1 4 8 -3z" fill="#fff"/>
+            <circle cx="18" cy="30" r="2" fill="#1a1a1a" stroke="none"/>
+            <circle cx="26" cy="30" r="2" fill="#1a1a1a" stroke="none"/>
+          </g>
+        </svg>
+        <div class="bn">ラスボス</div>
+      </div>
+      <!-- 隠しボス -->
+      <div class="boss secret">
+        <svg width="46" height="50" viewBox="0 0 46 50">
+          <g stroke="#1a1a1a" stroke-width="2" stroke-linejoin="round">
+            <circle cx="23" cy="25" r="15" fill="#c0c0c8"/>
+            <g fill="#c0c0c8">
+              <path d="M23 4 l4 8 -8 0z"/><path d="M44 25 l-8 4 0 -8z"/>
+              <path d="M23 46 l-4 -8 8 0z"/><path d="M2 25 l8 -4 0 8z"/>
+              <path d="M38 10 l-2 8 -6 -6z"/><path d="M38 40 l-8 -2 6 -6z"/>
+              <path d="M8 40 l2 -8 6 6z"/><path d="M8 10 l8 2 -6 6z"/>
+            </g>
+            <circle cx="23" cy="25" r="6" fill="#d83030"/>
+            <circle cx="23" cy="25" r="2.5" fill="#1a1a1a" stroke="none"/>
+          </g>
+        </svg>
+        <div class="bn">？？？</div>
+      </div>
+    </div>
+
+    <!-- 下段 -->
+    <div class="bottom">
+      <div class="howto">
+        <h3>🎮 あそびかた</h3>
+        <div class="keyline">
+          <span class="key">←</span><span class="key">↑</span>
+          <span class="key">↓</span><span class="key">→</span>
+          <span>矢印キーで うごく</span>
+        </div>
+        <div class="keyline">
+          <span class="key">スペース</span>
+          <span>こうげき（長押しで とくしゅ攻撃！）</span>
+        </div>
+        <div class="note">
+          インストール不要。スマホ・パソコンのブラウザで
+          QRコードを読みこむだけ。<br>
+          全ボスをノーダメージで倒すと…？🤫
+        </div>
+      </div>
+
+      <div class="qrbox">
+        <div class="qlabel">▼ ここからすぐ遊べる ▼</div>
+        <img src="qrcode.png" alt="ゲームのQRコード">
+        <div class="play">QRコードを読みとってスタート</div>
+        <span class="free">あそび放題・無料</span>
+      </div>
+    </div>
+
+    <div class="footer">親子で手づくりした2Dブラウザゲーム　—　ともだちにシェアしてね！</div>
+
+  </div>
+</div>
+</body>
+</html>

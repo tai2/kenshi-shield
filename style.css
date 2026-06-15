@@ -5,7 +5,12 @@ html, body {
   font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
   color: #fff;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   overflow: hidden;
+  /* ゲーム操作中にスクロール／ダブルタップズームが起きないように */
+  touch-action: none;
+  overscroll-behavior: none;
 }
 body {
   display: flex;
@@ -15,9 +20,17 @@ body {
 }
 #wrap {
   position: relative;
+  line-height: 0; /* canvas 下の余白を消して #wrap を canvas にぴったり合わせる */
 }
 canvas {
   display: block;
+  /* アスペクト比 900:700 を保ったままビューポートに収める。
+     PC ではヒント分(約44px)を引いて高さを確保する。 */
+  width: min(100vw, calc((100vh - 44px) * 900 / 700));
+  height: auto;
+  aspect-ratio: 900 / 700;
+  max-width: 100vw;
+  max-height: 100vh;
   background: #e9dfc1;
   border: 4px solid #333;
   border-radius: 6px;
@@ -28,4 +41,90 @@ canvas {
   font-size: 14px;
   color: #bbb;
   text-align: center;
+  line-height: 1.4;
+}
+
+/* =====================================================================
+   タッチデバイス用ソフトボタン
+   ・既定は非表示。JS が body.touch を付け、戦闘中だけ表示する
+   ・#wrap (= canvas) に重ねて配置。コンテナは透過、ボタンだけ反応
+   ===================================================================== */
+#touch-controls {
+  display: none;
+  position: absolute;
+  inset: 0;
+  pointer-events: none; /* ボタン以外はキャンバスを邪魔しない */
+  z-index: 10;
+}
+.tc-btn {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(26, 26, 46, 0.45);
+  border: 2.5px solid rgba(255, 255, 255, 0.75);
+  border-radius: 14px;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  user-select: none;
+  line-height: 1;
+  text-align: center;
+}
+.tc-btn.pressed {
+  background: rgba(255, 255, 255, 0.4);
+  transform: scale(0.94);
+}
+
+/* 方向パッド（左下）。3x3 グリッドの十字配置 */
+.dpad {
+  position: absolute;
+  left: 3vmin;
+  bottom: 3vmin;
+  width: 42vmin;
+  height: 42vmin;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 1vmin;
+}
+.dpad .tc-btn { width: 100%; height: 100%; font-size: 5vmin; }
+.dpad-up    { grid-column: 2; grid-row: 1; }
+.dpad-left  { grid-column: 1; grid-row: 2; }
+.dpad-right { grid-column: 3; grid-row: 2; }
+.dpad-down  { grid-column: 2; grid-row: 3; }
+
+/* アクション（右下）：攻撃ボタン + アイテム2つ */
+.actions {
+  position: absolute;
+  right: 3vmin;
+  bottom: 3vmin;
+  display: flex;
+  align-items: flex-end;
+  gap: 2.4vmin;
+}
+.tc-attack {
+  width: 24vmin;
+  height: 24vmin;
+  border-radius: 50%;
+  font-size: 5vmin;
+  background: rgba(176, 32, 32, 0.5);
+  border-color: rgba(255, 220, 220, 0.85);
+}
+.tc-item {
+  width: 13vmin;
+  height: 13vmin;
+  border-radius: 2.4vmin;
+  font-size: 3.4vmin;
+  flex-direction: column;
+  gap: 0.4vmin;
+  white-space: pre-line;
+}
+
+/* タッチ端末ではヒント文を消して描画領域を最大化 */
+body.touch #hint { display: none; }
+body.touch canvas {
+  width: min(100vw, calc(100vh * 900 / 700));
 }

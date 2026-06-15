@@ -11,8 +11,11 @@
     <canvas id="game" width="900" height="700"></canvas>
 
     <!-- タッチデバイス用ソフトボタン（戦闘中のみ JS で表示）。
-         移動はボタンではなく、キャンバスを触れた場所へ自キャラが追従する。 -->
+         移動は左下のバーチャルスティック（中心からの指の角度で操作）。 -->
     <div id="touch-controls">
+      <div class="joystick" id="joystick">
+        <div class="joystick-knob" id="joystick-knob"></div>
+      </div>
       <div class="actions">
         <button class="tc-btn tc-item" id="btn-item-cycle" aria-label="アイテム切替">切替</button>
         <button class="tc-btn tc-item" id="btn-item-use"   aria-label="アイテム使用">毒</button>

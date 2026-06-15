@@ -78,8 +78,34 @@ canvas {
   transform: scale(0.94);
 }
 
-/* アクション（右下）：攻撃ボタン + アイテム2つ。
-   移動はキャンバスのドラッグで行うため方向パッドは無い。 */
+/* 移動スティック（左下）。中心からの指の角度で進行方向を決める */
+.joystick {
+  position: absolute;
+  left: 5vmin;
+  bottom: 5vmin;
+  width: 34vmin;
+  height: 34vmin;
+  border-radius: 50%;
+  background: rgba(26, 26, 46, 0.35);
+  border: 2.5px solid rgba(255, 255, 255, 0.5);
+  pointer-events: auto;
+  touch-action: none;
+}
+.joystick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 15vmin;
+  height: 15vmin;
+  margin-left: -7.5vmin;
+  margin-top: -7.5vmin;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.45);
+  border: 2.5px solid rgba(255, 255, 255, 0.8);
+  pointer-events: none;
+}
+
+/* アクション（右下）：攻撃ボタン + アイテム2つ。 */
 .actions {
   position: absolute;
   right: 3vmin;

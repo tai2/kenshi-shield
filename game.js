@@ -115,12 +115,16 @@ function setupMouse() {
 
 // ---- タッチ操作 --------------------------------------------------------
 // 攻撃／アイテムはソフトボタン（キーボードと同じ spaceDown 等を叩く）。
-// 移動は方向キーではなく「触れた場所へ自キャラが追従」する方式。
+// 移動は左下のバーチャルスティック。スティック中心からの指の「角度」で
+// キャラの進行方向を決める（十字キーではなくアナログ操作）。
 let touchEnabled = false;
 let touchControlsEl = null;
 let itemUseBtn = null;
-// 移動操作中の指。id で1本の指を追い、その位置(ゲーム座標)へ Player が向かう。
-let touchMove = { active: false, id: null, x: 0, y: 0 };
+let joystickEl = null;
+let joystickKnob = null;
+// スティックの出力方向（正規化済み）と操作中の指 id
+let joyDir = { active: false, x: 0, y: 0 };
+let joyId = null;
 
 // タッチ座標をキャンバス内のゲーム座標へ変換（CSSスケールを補正）
 function touchToGame(t) {
@@ -129,6 +133,35 @@ function touchToGame(t) {
     x: (t.clientX - r.left) * (W / r.width),
     y: (t.clientY - r.top) * (H / r.height),
   };
+}
+
+// スティックを離した／無効化したときの状態リセット
+function resetJoystick() {
+  joyId = null;
+  joyDir.active = false;
+  joyDir.x = 0; joyDir.y = 0;
+  if (joystickKnob) joystickKnob.style.transform = 'translate(0, 0)';
+}
+
+// 指の位置からスティックの方向とノブ表示を更新する
+function updateJoystick(t) {
+  const r = joystickEl.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const dx = t.clientX - cx, dy = t.clientY - cy;
+  const dist = Math.hypot(dx, dy);
+  const max = r.width / 2;
+  const nx = dist > 0 ? dx / dist : 0, ny = dist > 0 ? dy / dist : 0;
+  // ノブは台座の内側に収まるようクランプして指方向へ寄せる
+  const knobMax = max - joystickKnob.clientWidth / 2;
+  const knobDist = Math.min(dist, knobMax);
+  joystickKnob.style.transform = `translate(${nx * knobDist}px, ${ny * knobDist}px)`;
+  // 小さなデッドゾーン内では動かさない
+  if (dist > max * 0.28) {
+    joyDir.active = true;
+    joyDir.x = nx; joyDir.y = ny;
+  } else {
+    joyDir.active = false;
+  }
 }
 
 function setupTouch() {
@@ -172,49 +205,41 @@ function setupTouch() {
     if (state === 'BATTLE') cycleSelectedItem();
   }, { passive: false });
 
-  // キャンバスのタッチ:
-  //   戦闘中  → 触れた場所へ移動（指1本を追従、ドラッグで目標を更新）
-  //   その他  → メニュー操作（武器選択・ショップ・ゲームオーバー等のタップ）
-  // 攻撃／アイテムボタンは別要素なので、ボタンを押した指はここには来ない。
-  canvas.addEventListener('touchstart', (e) => {
+  // 移動スティック（左下）。中心からの指の角度で進行方向を決める。
+  joystickEl = document.getElementById('joystick');
+  joystickKnob = document.getElementById('joystick-knob');
+  joystickEl.addEventListener('touchstart', (e) => {
     e.preventDefault();
-    if (state !== 'BATTLE') {
-      const p = touchToGame(e.changedTouches[0]);
-      mouse.x = p.x; mouse.y = p.y;
-      handleClick();
-      return;
-    }
-    if (touchMove.id === null) {
-      const t = e.changedTouches[0];
-      const p = touchToGame(t);
-      touchMove.id = t.identifier;
-      touchMove.x = p.x; touchMove.y = p.y;
-      touchMove.active = true;
-    }
+    if (joyId !== null) return;
+    const t = e.changedTouches[0];
+    joyId = t.identifier;
+    updateJoystick(t);
   }, { passive: false });
-
-  canvas.addEventListener('touchmove', (e) => {
-    if (touchMove.id === null) return;
+  joystickEl.addEventListener('touchmove', (e) => {
+    if (joyId === null) return;
     e.preventDefault();
     for (const t of e.changedTouches) {
-      if (t.identifier === touchMove.id) {
-        const p = touchToGame(t);
-        touchMove.x = p.x; touchMove.y = p.y;
-      }
+      if (t.identifier === joyId) updateJoystick(t);
     }
   }, { passive: false });
-
-  const endMove = (e) => {
-    if (touchMove.id === null) return;
+  const joyEnd = (e) => {
+    if (joyId === null) return;
     for (const t of e.changedTouches) {
-      if (t.identifier === touchMove.id) {
-        touchMove.id = null;
-        touchMove.active = false;
-      }
+      if (t.identifier === joyId) resetJoystick();
     }
   };
-  canvas.addEventListener('touchend', endMove);
-  canvas.addEventListener('touchcancel', endMove);
+  joystickEl.addEventListener('touchend', joyEnd);
+  joystickEl.addEventListener('touchcancel', joyEnd);
+
+  // キャンバスのタッチ: メニュー画面（武器選択・ショップ・ゲームオーバー等）の
+  // タップ操作。戦闘中の移動はスティックが受け持つのでここでは何もしない。
+  canvas.addEventListener('touchstart', (e) => {
+    if (state === 'BATTLE') return;
+    e.preventDefault();
+    const p = touchToGame(e.changedTouches[0]);
+    mouse.x = p.x; mouse.y = p.y;
+    handleClick();
+  }, { passive: false });
 }
 
 // 戦闘中だけソフトボタンを表示し、使用ボタンに現在のアイテムと所持数を出す
@@ -225,10 +250,9 @@ function updateTouchControls() {
   if (show && itemUseBtn) {
     const it = ITEMS[selectedItem];
     itemUseBtn.textContent = it.label + '\n×' + inventory[selectedItem];
-  } else if (!show) {
-    // 戦闘外では移動追従を解除（指が残っていても動かさない）
-    touchMove.active = false;
-    touchMove.id = null;
+  } else if (!show && joyId !== null) {
+    // 戦闘外ではスティックを解除（指が残っていても動かさない）
+    resetJoystick();
   }
 }
 
@@ -331,11 +355,9 @@ class Player {
     if (keys['ArrowRight']) dx += 1;
     if (keys['ArrowUp']) dy -= 1;
     if (keys['ArrowDown']) dy += 1;
-    // タッチ移動: キー入力が無いときは、触れた場所へ向かう（数px手前で停止）
-    if (!dx && !dy && touchMove.active) {
-      const tdx = touchMove.x - this.x, tdy = touchMove.y - this.y;
-      const tdist = Math.hypot(tdx, tdy);
-      if (tdist > 5) { dx = tdx / tdist; dy = tdy / tdist; }
+    // タッチ移動: キー入力が無いときはスティックの方向へ進む
+    if (!dx && !dy && joyDir.active) {
+      dx = joyDir.x; dy = joyDir.y;
     }
     if (dx || dy) {
       const len = Math.hypot(dx, dy);

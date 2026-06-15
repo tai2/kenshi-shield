@@ -2,14 +2,30 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>剣士シールド</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="wrap">
     <canvas id="game" width="900" height="700"></canvas>
-    <div id="hint">操作: 矢印キーで移動 / スペースで攻撃（長押しで特殊攻撃）</div>
+
+    <!-- タッチデバイス用ソフトボタン（戦闘中のみ JS で表示） -->
+    <div id="touch-controls">
+      <div class="dpad">
+        <button class="tc-btn dpad-up"    data-key="ArrowUp"    aria-label="上">▲</button>
+        <button class="tc-btn dpad-left"  data-key="ArrowLeft"  aria-label="左">◀</button>
+        <button class="tc-btn dpad-right" data-key="ArrowRight" aria-label="右">▶</button>
+        <button class="tc-btn dpad-down"  data-key="ArrowDown"  aria-label="下">▼</button>
+      </div>
+      <div class="actions">
+        <button class="tc-btn tc-item" id="btn-item-cycle" aria-label="アイテム切替">切替</button>
+        <button class="tc-btn tc-item" id="btn-item-use"   aria-label="アイテム使用">毒</button>
+        <button class="tc-btn tc-attack" id="btn-attack"   aria-label="攻撃">攻撃</button>
+      </div>
+    </div>
   </div>
+  <div id="hint">操作: 矢印キーで移動 / スペースで攻撃（長押しで特殊攻撃）</div>
   <script src="game.js"></script>
 </body>
 </html>

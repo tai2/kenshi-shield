@@ -113,6 +113,88 @@ function setupMouse() {
   canvas.addEventListener('mouseup', () => { mouse.down = false; });
 }
 
+// ---- タッチ操作 --------------------------------------------------------
+// スマホ／タブレット向けソフトボタン。キーボード入力と同じグローバル
+// (keys / spaceDown / spaceHeldDuration) を叩くので挙動は完全に共通。
+let touchEnabled = false;
+let touchControlsEl = null;
+let itemUseBtn = null;
+
+function setupTouch() {
+  touchEnabled = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  touchControlsEl = document.getElementById('touch-controls');
+  itemUseBtn = document.getElementById('btn-item-use');
+  if (!touchEnabled || !touchControlsEl) return;
+  document.body.classList.add('touch');
+
+  // 方向パッド: 矢印キーと同じく keys[] を立てる
+  touchControlsEl.querySelectorAll('[data-key]').forEach((el) => {
+    const code = el.getAttribute('data-key');
+    const press = (e) => { e.preventDefault(); keys[code] = true; el.classList.add('pressed'); };
+    const release = (e) => { e.preventDefault(); keys[code] = false; el.classList.remove('pressed'); };
+    el.addEventListener('touchstart', press, { passive: false });
+    el.addEventListener('touchend', release, { passive: false });
+    el.addEventListener('touchcancel', release, { passive: false });
+  });
+
+  // 攻撃ボタン: スペースキー相当（押す=onSpacePress、離す=onSpaceRelease(長押し時間)）
+  const atk = document.getElementById('btn-attack');
+  atk.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (!spaceDown) {
+      spaceDown = true;
+      spaceHeldDuration = 0;
+      if (player) player.onSpacePress();
+    }
+    atk.classList.add('pressed');
+  }, { passive: false });
+  const atkRelease = (e) => {
+    e.preventDefault();
+    if (spaceDown) {
+      const held = spaceHeldDuration;
+      spaceDown = false;
+      spaceHeldDuration = 0;
+      if (player) player.onSpaceRelease(held);
+    }
+    atk.classList.remove('pressed');
+  };
+  atk.addEventListener('touchend', atkRelease, { passive: false });
+  atk.addEventListener('touchcancel', atkRelease, { passive: false });
+
+  // アイテム使用(B) / 切替(V)
+  itemUseBtn.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (state === 'BATTLE') useSelectedItem();
+  }, { passive: false });
+  document.getElementById('btn-item-cycle').addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (state === 'BATTLE') cycleSelectedItem();
+  }, { passive: false });
+
+  // メニュー系画面（武器選択・ショップ・ゲームオーバー等）はキャンバスのタップで操作。
+  // 戦闘中はソフトボタンが受け持つのでキャンバスタップは無効。
+  canvas.addEventListener('touchstart', (e) => {
+    if (state === 'BATTLE') return;
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    const r = canvas.getBoundingClientRect();
+    mouse.x = (t.clientX - r.left) * (W / r.width);
+    mouse.y = (t.clientY - r.top) * (H / r.height);
+    handleClick();
+  }, { passive: false });
+}
+
+// 戦闘中だけソフトボタンを表示し、使用ボタンに現在のアイテムと所持数を出す
+function updateTouchControls() {
+  if (!touchEnabled || !touchControlsEl) return;
+  const show = state === 'BATTLE';
+  touchControlsEl.style.display = show ? 'block' : 'none';
+  if (show && itemUseBtn) {
+    const it = ITEMS[selectedItem];
+    itemUseBtn.textContent = it.label + '\n×' + inventory[selectedItem];
+  }
+}
+
 function handleClick() {
   if (state === 'WEAPON_SELECT') {
     // 武器ボタン
@@ -3968,6 +4050,7 @@ function loop(now) {
     drawVictory();
   }
 
+  updateTouchControls();
   requestAnimationFrame(loop);
 }
 
@@ -3975,5 +4058,6 @@ window.addEventListener('load', () => {
   canvas = document.getElementById('game');
   ctx = canvas.getContext('2d');
   setupMouse();
+  setupTouch();
   requestAnimationFrame(loop);
 });

@@ -78,25 +78,8 @@ canvas {
   transform: scale(0.94);
 }
 
-/* 方向パッド（左下）。3x3 グリッドの十字配置 */
-.dpad {
-  position: absolute;
-  left: 3vmin;
-  bottom: 3vmin;
-  width: 42vmin;
-  height: 42vmin;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(3, 1fr);
-  gap: 1vmin;
-}
-.dpad .tc-btn { width: 100%; height: 100%; font-size: 5vmin; }
-.dpad-up    { grid-column: 2; grid-row: 1; }
-.dpad-left  { grid-column: 1; grid-row: 2; }
-.dpad-right { grid-column: 3; grid-row: 2; }
-.dpad-down  { grid-column: 2; grid-row: 3; }
-
-/* アクション（右下）：攻撃ボタン + アイテム2つ */
+/* アクション（右下）：攻撃ボタン + アイテム2つ。
+   移動はキャンバスのドラッグで行うため方向パッドは無い。 */
 .actions {
   position: absolute;
   right: 3vmin;

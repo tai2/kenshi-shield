@@ -110,7 +110,8 @@ open index.html
 | 5(ラスボス) | `spike` | `SpikeBoss` | 150 | 突撃 / 円周3周(→cd10秒) / トゲ扇状(`Spike`) / 追跡10秒(→cd10秒) |
 | 6(隠し) | `composite` | `CompositeBoss` | 150 | **6パーツ合体で登場**(`drawCompositeIntro`)。第二形態あり |
 
-- **隠しボス出現条件**: ラスボス(`spike`)を**ノーダメ撃破**(`noHitRun`)で `composite` を `stages` に push（ゲーム1の `saw` と同じ仕組み、`loop()` の `BOSS_DEAD` 分岐）。
+- **隠しボス出現条件**: ラスボス(`spike`)を**ノーダメ撃破**(`noHitRun`)で `composite` を `stages` に push（ゲーム1の `saw` と同じ仕組み、`loop()` の `BOSS_DEAD` 分岐）。`noHitRun` は `player.hit()` 内でのみ false 化（無敵中の被弾は除外）、`startStage` で毎ステージ true にリセット。
+- ラスボス戦中は HUD に**「ノーダメ」バッジ**を表示（`isLastMainBossStage() && noHitRun`）。被弾すると即消えるので隠しボスの条件が見える。
 - `CompositeBoss` は `takeDamage` で1度目の撃破時に第二形態へ復活（`revived`, HP150再生）。形態1: ボム3連/ビーム(cd)/矢(cd)。形態2: + 斬撃 / 突撃(cd)。`intro`/`reviving` 中は無敵。
 - 新飛び道具: `PlayerArrow`(弓), `Shockwave`(波動リング, 通過で1ダメ), `Spike`(トゲ, 盾反射可)。`Arrow` は `maxBounces` 引数で壁反射対応。
 - ボス体の描画ヘルパー: `drawSwordBoss2Body` / `drawHammerBoss2Body`(角付き) / `drawBombBoss2Body`(四分割+渦巻き目) / `drawSpikeBall`(トゲ玉+中央目) / `drawCompositeBody`(全要素のせ集め)。

@@ -4843,6 +4843,10 @@ function mainStageCount() { return currentGame === 2 ? GAME2_STAGES.length : GAM
 function stageLabelText() {
   return isHiddenStage() ? '隠しステージ' : `STAGE ${stageIndex + 1} / ${mainStageCount()}`;
 }
+// 現在が各ゲームの最終ボス（隠しボス出現の判定対象）ステージか
+function isLastMainBossStage() {
+  return stages[stageIndex] === (currentGame === 2 ? 'spike' : 'bomb');
+}
 
 function drawHUD() {
   // ボスHPバー
@@ -4863,6 +4867,26 @@ function drawHUD() {
     ctx.font = 'bold 14px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(`${stageLabelText()}   ${bossDisplayName()}`, W / 2, by + bh + 16);
+
+    // 「ノーダメ」バッジ: ラスボス戦で被弾していない間だけ表示。
+    // 被弾すると noHitRun が false になりバッジが消える＝隠しボスの条件が見える。
+    if (isLastMainBossStage() && noHitRun) {
+      const bgw = 130, bgh = 26, bgx = bx + bw - bgw, bgy = by + bh + 26;
+      const pulse = 0.55 + 0.45 * Math.sin(performance.now() / 220);
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.strokeStyle = `rgba(255, 215, 80, ${0.55 + 0.45 * pulse})`;
+      ctx.lineWidth = 2;
+      roundRect(ctx, bgx, bgy, bgw, bgh, 13);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = `rgba(255, 224, 110, ${0.7 + 0.3 * pulse})`;
+      ctx.font = 'bold 15px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('★ ノーダメ ★', bgx + bgw / 2, bgy + bgh / 2 + 1);
+      ctx.textBaseline = 'alphabetic';
+      ctx.restore();
+    }
   }
   // 武器アイコン
   ctx.save();

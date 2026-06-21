@@ -784,20 +784,20 @@ class Arrow {
         const dx = this.x - player.x, dy = this.y - player.y;
         const d = Math.hypot(dx, dy);
         if (d < player.r + 22) {
-          // 矢が盾の正面側にあるとき反射
+          // 構え中は当たる向きに関わらず無効化（完全無敵）。正面なら反射してボスへ。
           const dot = (dx * player.facing.x + dy * player.facing.y) / Math.max(d, 0.0001);
           if (dot > 0.2) {
-            // 反射してボスへ
-            const nx = player.facing.x, ny = player.facing.y;
-            this.vx = nx * 7;
-            this.vy = ny * 7;
-            this.angle = Math.atan2(ny, nx);
+            this.vx = player.facing.x * 7;
+            this.vy = player.facing.y * 7;
+            this.angle = Math.atan2(this.vy, this.vx);
             this.owner = 'player';
             this.reflected = true;
             this.damage = 2;
-            effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
-            return;
+          } else {
+            this.alive = false;
           }
+          effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+          return;
         }
       }
       if (Math.hypot(this.x - player.x, this.y - player.y) < this.r + player.r) {
@@ -886,18 +886,20 @@ class BossSlash {
         const dx = this.x - player.x, dy = this.y - player.y;
         const d = Math.hypot(dx, dy);
         if (d < player.r + 26) {
+          // 構え中は当たる向きに関わらず無効化（完全無敵）。正面なら反射してボスへ。
           const dot = (dx * player.facing.x + dy * player.facing.y) / Math.max(d, 0.0001);
           if (dot > 0.2) {
-            const nx = player.facing.x, ny = player.facing.y;
-            this.vx = nx * 7;
-            this.vy = ny * 7;
-            this.angle = Math.atan2(ny, nx);
+            this.vx = player.facing.x * 7;
+            this.vy = player.facing.y * 7;
+            this.angle = Math.atan2(this.vy, this.vx);
             this.owner = 'player';
             this.reflected = true;
             this.damage = 5;
-            effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
-            return;
+          } else {
+            this.alive = false;
           }
+          effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+          return;
         }
       }
       if (player.alive && Math.hypot(this.x - player.x, this.y - player.y) < this.r + player.r) {
@@ -960,6 +962,7 @@ class BigArrow {
         const dx = this.x - player.x, dy = this.y - player.y;
         const d = Math.hypot(dx, dy);
         if (d < player.r + 24) {
+          // 構え中は当たる向きに関わらず無効化（完全無敵）。正面なら反射してボスへ。
           const dot = (dx * player.facing.x + dy * player.facing.y) / Math.max(d, 0.0001);
           if (dot > 0.2) {
             this.vx = player.facing.x * 9;
@@ -968,9 +971,11 @@ class BigArrow {
             this.owner = 'player';
             this.reflected = true;
             this.damage = 4;
-            effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
-            return;
+          } else {
+            this.alive = false;
           }
+          effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+          return;
         }
       }
       if (Math.hypot(this.x - player.x, this.y - player.y) < this.r + player.r) {
@@ -1391,14 +1396,17 @@ class Spike {
         const dx = this.x - player.x, dy = this.y - player.y;
         const d = Math.hypot(dx, dy);
         if (d < player.r + 24) {
+          // 構え中は当たる向きに関わらず無効化（完全無敵）。正面なら反射してボスへ。
           const dot = (dx * player.facing.x + dy * player.facing.y) / Math.max(d, 0.0001);
           if (dot > 0.2) {
             this.vx = player.facing.x * 8; this.vy = player.facing.y * 8;
             this.angle = Math.atan2(this.vy, this.vx);
             this.owner = 'player'; this.reflected = true; this.damage = 3;
-            effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
-            return;
+          } else {
+            this.alive = false;
           }
+          effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+          return;
         }
       }
       if (Math.hypot(this.x - player.x, this.y - player.y) < this.r + player.r) {

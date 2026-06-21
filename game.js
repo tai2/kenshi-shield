@@ -11,10 +11,31 @@ const BOSS_MAX_HP = 100;
 
 // ---- グローバル状態 -----------------------------------------------------
 let canvas, ctx;
-let state = 'WEAPON_SELECT'; // WEAPON_SELECT, BOSS_INTRO, BATTLE, BOSS_DEAD, GAME_OVER, VICTORY
-let selectedWeapon = null;   // 'sword' | 'shield' | 'hammer'
+let state = 'GAME_SELECT'; // GAME_SELECT, WEAPON_SELECT, BOSS_INTRO, BATTLE, BOSS_DEAD, GAME_OVER, VICTORY
+let selectedWeapon = null;   // 'sword' | 'shield' | 'hammer' | 'bow'(ゲーム2のみ)
 let stageIndex = 0;
 let stages = ['sword', 'bow', 'hammer', 'bomb'];
+
+// ---- ゲーム選択（章） --------------------------------------------------
+// currentGame: 1 = 剣士シールド（既存）, 2 = 剣士シールド2
+// ゲーム1をクリアするとゲーム2が解禁され、クリアフラグは localStorage に保存。
+let currentGame = 1;
+const GAME1_STAGES = ['sword', 'bow', 'hammer', 'bomb'];
+const GAME2_STAGES = ['sword2', 'bow2', 'hammer2', 'bomb2', 'spike'];
+let game1Cleared = false;
+try { game1Cleared = localStorage.getItem('kenshiShield.game1Cleared') === '1'; } catch (e) {}
+function saveGame1Cleared() {
+  game1Cleared = true;
+  try { localStorage.setItem('kenshiShield.game1Cleared', '1'); } catch (e) {}
+}
+// 現在のゲームで選べる武器（ゲーム2だけ弓が増える）
+function availableWeapons() {
+  return currentGame === 2 ? ['sword', 'shield', 'hammer', 'bow'] : ['sword', 'shield', 'hammer'];
+}
+// 現在のゲームのデフォルトステージ配列
+function defaultStages() {
+  return currentGame === 2 ? GAME2_STAGES.slice() : GAME1_STAGES.slice();
+}
 
 let player = null;
 let boss = null;
@@ -22,11 +43,11 @@ let projectiles = [];
 let effects = [];
 let minions = []; // ボスの子分（爆弾ボス第二形態）
 let coins = 0;
-let upgrades = { sword: false, shield: false, hammer: false };
+let upgrades = { sword: false, shield: false, hammer: false, bow: false };
 // 隠しボス解禁: 各ステージ中に一度も被弾していないと true。被弾でリセット。
 // ラスボスをノーダメ撃破するとノコギリのボスが出現する。
 let noHitRun = true;
-const UPGRADE_COST = { hammer: 2, shield: 4, sword: 6 };
+const UPGRADE_COST = { hammer: 2, shield: 4, sword: 6, bow: 4 };
 const COIN_REWARD = 2;
 
 // アイテム: ショップで購入してバトル中にBキーで使用、Vキーで選択切替
@@ -257,7 +278,29 @@ function updateTouchControls() {
 }
 
 function handleClick() {
+  if (state === 'GAME_SELECT') {
+    for (const b of gameSelectButtons()) {
+      if (b.locked) continue;
+      if (mouse.x >= b.x && mouse.x <= b.x + b.w &&
+          mouse.y >= b.y && mouse.y <= b.y + b.h) {
+        currentGame = b.game;
+        state = 'WEAPON_SELECT';
+        selectedWeapon = null;
+        stages = defaultStages();
+        return;
+      }
+    }
+    return;
+  }
   if (state === 'WEAPON_SELECT') {
+    // タイトル（ゲーム選択）へ戻る
+    const back = backButton();
+    if (mouse.x >= back.x && mouse.x <= back.x + back.w &&
+        mouse.y >= back.y && mouse.y <= back.y + back.h) {
+      state = 'GAME_SELECT';
+      selectedWeapon = null;
+      return;
+    }
     // 武器ボタン
     const buttons = weaponButtons();
     for (const b of buttons) {
@@ -340,6 +383,19 @@ class Player {
     this.hammerSpinning = false;
     this.hammerSpinAngle = 0;
     this.spinHitCooldown = 0;  // 連続ヒット間隔（剣/ハンマー回転共用）
+
+    // 弓（ゲーム2の追加武器）
+    this.bowAiming = false;    // 長押しで構え中。敵の方向を自動で向く
+  }
+
+  // 一番近い敵（ボス＋子分）を返す。いなければ null。
+  nearestEnemy() {
+    let best = null, bestD = Infinity;
+    for (const e of aliveEnemies()) {
+      const d = Math.hypot(e.x - this.x, e.y - this.y);
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    return best;
   }
 
   update(dt) {
@@ -368,6 +424,7 @@ class Player {
       if (this.swordCharge > 0) speed *= 0.7;
       if (this.hammerWindup > 0) speed *= 0.2;
       if (this.hammerSpinning) speed *= 0.95;
+      if (this.bowAiming) speed *= 0.6;
       this.x += dx * speed;
       this.y += dy * speed;
     }
@@ -457,6 +514,17 @@ class Player {
           }
         }
       }
+    } else if (this.weapon === 'bow') {
+      // 長押しで構え。構え中は一番近い敵の方向を自動で向く。
+      this.bowAiming = spaceDown && spaceHeldDuration >= 0.12 && this.attackCooldown <= 0;
+      if (this.bowAiming) {
+        const e = this.nearestEnemy();
+        if (e) {
+          const dx = e.x - this.x, dy = e.y - this.y;
+          const d = Math.hypot(dx, dy) || 1;
+          this.facing = { x: dx / d, y: dy / d };
+        }
+      }
     }
   }
 
@@ -509,6 +577,22 @@ class Player {
         this.hammerWindup = 1.0;
         this.attackCooldown = 0.5;
       }
+    } else if (this.weapon === 'bow') {
+      if (this.attackCooldown > 0) { this.bowAiming = false; return; }
+      // 長押し(構え)から放つと自動照準＆強力(5)。タップは正面へ(3)。
+      const charged = heldFor >= 0.12;
+      if (charged) {
+        const e = this.nearestEnemy();
+        if (e) {
+          const dx = e.x - this.x, dy = e.y - this.y;
+          const d = Math.hypot(dx, dy) || 1;
+          this.facing = { x: dx / d, y: dy / d };
+        }
+      }
+      const dmg = charged ? 5 : 3;
+      projectiles.push(new PlayerArrow(this.x, this.y, this.facing, dmg, upgrades.bow ? 2 : 0));
+      this.bowAiming = false;
+      this.attackCooldown = 0.45;
     }
   }
 
@@ -661,9 +745,9 @@ class ShieldThrown {
 }
 
 class Arrow {
-  constructor(x, y, dir) {
+  constructor(x, y, dir, maxBounces = 0, speed = 6) {
     this.x = x; this.y = y;
-    this.vx = dir.x * 6; this.vy = dir.y * 6;
+    this.vx = dir.x * speed; this.vy = dir.y * speed;
     this.angle = Math.atan2(dir.y, dir.x);
     this.r = 5;
     this.alive = true;
@@ -671,14 +755,28 @@ class Arrow {
     this.life = 5.0;
     this.damage = 1;
     this.reflected = false;
+    this.bouncesLeft = maxBounces; // 壁での反射可能回数（ゲーム2の弓ボス）
   }
   update(dt) {
     this.x += this.vx; this.y += this.vy;
     this.life -= dt;
     if (this.life <= 0) this.alive = false;
-    // 壁
+    // 壁: 反射回数が残っていれば跳ね返る。なければ消滅。
     const cd = Math.hypot(this.x - CENTER.x, this.y - CENTER.y);
-    if (cd > ARENA_R - 4) this.alive = false;
+    if (cd > ARENA_R - 4) {
+      if (!this.reflected && this.bouncesLeft > 0) {
+        const nx = (this.x - CENTER.x) / cd, ny = (this.y - CENTER.y) / cd;
+        const dot = this.vx * nx + this.vy * ny;
+        this.vx -= 2 * dot * nx; this.vy -= 2 * dot * ny;
+        this.x = CENTER.x + nx * (ARENA_R - 6);
+        this.y = CENTER.y + ny * (ARENA_R - 6);
+        this.angle = Math.atan2(this.vy, this.vx);
+        this.bouncesLeft--;
+        effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.2 });
+      } else {
+        this.alive = false;
+      }
+    }
 
     if (!this.reflected && player.alive) {
       // 盾構えで反射
@@ -1158,6 +1256,174 @@ class Beam {
       ctx.fillStyle = `rgba(255, 255, 255, ${t})`;
       ctx.fillRect(0, -w / 2.4, this.range, w / 1.2);
     }
+    ctx.restore();
+  }
+}
+
+// プレイヤーの弓矢（ゲーム2の追加武器）。敵にダメージ、強化で壁に2回反射。
+class PlayerArrow {
+  constructor(x, y, dir, damage, maxBounces) {
+    const sp = 8;
+    this.x = x + dir.x * 18; this.y = y + dir.y * 18;
+    this.vx = dir.x * sp; this.vy = dir.y * sp;
+    this.angle = Math.atan2(dir.y, dir.x);
+    this.r = 6;
+    this.alive = true;
+    this.owner = 'player';
+    this.life = 3.0;
+    this.damage = damage;
+    this.bouncesLeft = maxBounces || 0;
+    this.hitTargets = new Set();
+  }
+  update(dt) {
+    this.x += this.vx; this.y += this.vy;
+    this.life -= dt;
+    if (this.life <= 0) this.alive = false;
+    const cd = Math.hypot(this.x - CENTER.x, this.y - CENTER.y);
+    if (cd > ARENA_R - 4) {
+      if (this.bouncesLeft > 0) {
+        const nx = (this.x - CENTER.x) / cd, ny = (this.y - CENTER.y) / cd;
+        const dot = this.vx * nx + this.vy * ny;
+        this.vx -= 2 * dot * nx; this.vy -= 2 * dot * ny;
+        this.x = CENTER.x + nx * (ARENA_R - 6);
+        this.y = CENTER.y + ny * (ARENA_R - 6);
+        this.angle = Math.atan2(this.vy, this.vx);
+        this.bouncesLeft--;
+        effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.2 });
+      } else {
+        this.alive = false;
+      }
+    }
+    for (const e of aliveEnemies()) {
+      if (this.hitTargets.has(e)) continue;
+      if (Math.hypot(e.x - this.x, e.y - this.y) < this.r + e.r) {
+        e.takeDamage(this.damage);
+        effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+        this.alive = false;
+        break;
+      }
+    }
+  }
+  draw(ctx) {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.angle);
+    ctx.strokeStyle = '#3a6a3a';
+    ctx.fillStyle = '#2f7a3a';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath(); ctx.moveTo(-14, 0); ctx.lineTo(10, 0); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(16, 0); ctx.lineTo(7, -5); ctx.lineTo(7, 5); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#cfe8c0';
+    ctx.beginPath();
+    ctx.moveTo(-14, 0); ctx.lineTo(-20, -5); ctx.lineTo(-16, 0); ctx.lineTo(-20, 5);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ハンマーボス（ゲーム2）の波動。中心から広がるリングで、通過時に1ダメージ。
+class Shockwave {
+  constructor(x, y, maxR = 210, speed = 230, damage = 1) {
+    this.x = x; this.y = y;
+    this.r = 8;
+    this.maxR = maxR;
+    this.speed = speed;
+    this.band = 20;
+    this.alive = true;
+    this.owner = 'boss';
+    this.damage = damage;
+    this.didHit = false;
+    this.reflectable = false;
+  }
+  update(dt) {
+    this.r += this.speed * dt;
+    if (this.r >= this.maxR) this.alive = false;
+    if (!this.didHit && player.alive) {
+      const d = Math.hypot(player.x - this.x, player.y - this.y);
+      if (Math.abs(d - this.r) < this.band + player.r) {
+        if (player.hit()) this.didHit = true;
+      }
+    }
+  }
+  draw(ctx) {
+    const a = Math.max(0, 1 - this.r / this.maxR);
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.strokeStyle = `rgba(120, 200, 255, ${0.55 * a})`;
+    ctx.lineWidth = this.band;
+    ctx.beginPath(); ctx.arc(0, 0, this.r, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = `rgba(255,255,255,${0.85 * a})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, 0, this.r, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ラスボス（ゲーム2）のトゲ。直進し、盾で反射可能。
+class Spike {
+  constructor(x, y, dir, speed = 6.5) {
+    this.x = x; this.y = y;
+    this.vx = dir.x * speed; this.vy = dir.y * speed;
+    this.angle = Math.atan2(dir.y, dir.x);
+    this.r = 7;
+    this.alive = true;
+    this.owner = 'boss';
+    this.life = 4.0;
+    this.damage = 1;
+    this.reflected = false;
+  }
+  reflect() {
+    const a = Math.random() * Math.PI * 2;
+    this.vx = Math.cos(a) * 7; this.vy = Math.sin(a) * 7;
+    this.angle = Math.atan2(this.vy, this.vx);
+    this.owner = 'player'; this.reflected = true; this.damage = 3;
+  }
+  update(dt) {
+    this.x += this.vx; this.y += this.vy;
+    this.life -= dt;
+    if (this.life <= 0) this.alive = false;
+    const cd = Math.hypot(this.x - CENTER.x, this.y - CENTER.y);
+    if (cd > ARENA_R - 4) this.alive = false;
+    if (!this.reflected && player.alive) {
+      if (player.blocking) {
+        const dx = this.x - player.x, dy = this.y - player.y;
+        const d = Math.hypot(dx, dy);
+        if (d < player.r + 24) {
+          const dot = (dx * player.facing.x + dy * player.facing.y) / Math.max(d, 0.0001);
+          if (dot > 0.2) {
+            this.vx = player.facing.x * 8; this.vy = player.facing.y * 8;
+            this.angle = Math.atan2(this.vy, this.vx);
+            this.owner = 'player'; this.reflected = true; this.damage = 3;
+            effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+            return;
+          }
+        }
+      }
+      if (Math.hypot(this.x - player.x, this.y - player.y) < this.r + player.r) {
+        if (player.hit()) this.alive = false;
+      }
+    } else if (this.reflected) {
+      for (const e of aliveEnemies()) {
+        if (Math.hypot(this.x - e.x, this.y - e.y) < this.r + e.r) {
+          e.takeDamage(this.damage); this.alive = false;
+          effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+          break;
+        }
+      }
+    }
+  }
+  draw(ctx) {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.angle);
+    ctx.fillStyle = this.reflected ? '#7ec0ff' : '#9a9aa6';
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(17, 0); ctx.lineTo(-8, -6); ctx.lineTo(-3, 0); ctx.lineTo(-8, 6);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.restore();
   }
 }
@@ -2840,6 +3106,855 @@ class SawBoss extends Boss {
 }
 
 // =====================================================================
+// 剣士シールド2 のボス（全6体・隠しボス含む）
+// =====================================================================
+
+// ---- ボス1: 剣 — ビーム / 斬撃 / 突撃(クールダウン5秒) ---------------
+class SwordBoss2 extends Boss {
+  constructor() {
+    super(CENTER.x, CENTER.y - 100);
+    this.r = 26;
+    this.mode = 'idle';
+    this.modeTimer = 1.8;
+    this.bounces = 0;
+    this.maxBounces = 3;
+    this.vx = 0; this.vy = 0;
+    this.angle = 0;
+    this.aimAngle = -Math.PI / 2;
+  }
+  isAttacking() { return this.mode === 'charging'; }
+  aimToPlayer() {
+    const dx = player.x - this.x, dy = player.y - this.y;
+    this.aimAngle = Math.atan2(dy, dx);
+    const d = Math.hypot(dx, dy) || 1;
+    return { x: dx / d, y: dy / d };
+  }
+  update(dt) {
+    if (!this.alive) return;
+    if (this.hitFlash > 0) this.hitFlash -= dt;
+    this.modeTimer -= dt;
+
+    if (this.mode === 'idle') {
+      this.angle += dt * 1.2;
+      this.aimToPlayer();
+      if (this.modeTimer <= 0) {
+        const c = Math.random();
+        if (c < 0.34) { this.mode = 'telegraphBeam'; this.modeTimer = 0.7; }
+        else if (c < 0.67) { this.mode = 'telegraphSlash'; this.modeTimer = 0.6; }
+        else { this.mode = 'telegraphCharge'; this.modeTimer = 0.7; }
+      }
+    } else if (this.mode === 'telegraphBeam') {
+      this.aimToPlayer();
+      this.angle += dt * 2;
+      if (this.modeTimer <= 0) {
+        const dir = this.aimToPlayer();
+        projectiles.push(new Beam(this.x, this.y, dir, 0.3, 0.6));
+        this.mode = 'beamRecover'; this.modeTimer = 0.9;
+      }
+    } else if (this.mode === 'beamRecover') {
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.4; }
+    } else if (this.mode === 'telegraphSlash') {
+      const dir = this.aimToPlayer();
+      this.angle += dt * 3;
+      if (this.modeTimer <= 0) {
+        projectiles.push(new BossSlash(this.x, this.y, dir));
+        this.mode = 'slashRecover'; this.modeTimer = 0.7;
+      }
+    } else if (this.mode === 'slashRecover') {
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.4; }
+    } else if (this.mode === 'telegraphCharge') {
+      this.angle += dt * 3;
+      const dir = this.aimToPlayer();
+      if (this.modeTimer <= 0) {
+        this.vx = dir.x * 6.8; this.vy = dir.y * 6.8;
+        this.bounces = 0;
+        this.mode = 'charging'; this.modeTimer = 5.0;
+      }
+    } else if (this.mode === 'charging') {
+      this.angle += dt * 18;
+      this.x += this.vx; this.y += this.vy;
+      const ddx = this.x - CENTER.x, ddy = this.y - CENTER.y;
+      const d = Math.hypot(ddx, ddy);
+      if (d > ARENA_R - this.r) {
+        const nx = ddx / d, ny = ddy / d;
+        this.x = CENTER.x + nx * (ARENA_R - this.r);
+        this.y = CENTER.y + ny * (ARENA_R - this.r);
+        const dot = this.vx * nx + this.vy * ny;
+        this.vx -= 2 * dot * nx; this.vy -= 2 * dot * ny;
+        this.bounces++;
+        if (this.bounces >= this.maxBounces) {
+          this.vx = 0; this.vy = 0;
+          this.mode = 'cooldown'; this.modeTimer = 5.0;
+        }
+      }
+      if (this.mode === 'charging' && player.alive &&
+          Math.hypot(player.x - this.x, player.y - this.y) < this.r + player.r) {
+        player.hit();
+      }
+      if (this.mode === 'charging' && this.modeTimer <= 0) {
+        this.vx = 0; this.vy = 0; this.mode = 'cooldown'; this.modeTimer = 5.0;
+      }
+    } else if (this.mode === 'cooldown') {
+      // 突撃後はぐったり（クールダウン5秒・無防備）
+      this.angle += dt * 0.4;
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.6; }
+    }
+  }
+  draw(ctx) {
+    this.baseDraw(function() {
+      // ビーム/突撃の予告線
+      if (this.mode === 'telegraphBeam' || this.mode === 'telegraphCharge') {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        const tcol = this.mode === 'telegraphBeam' ? '255,80,80' : '255,140,60';
+        ctx.strokeStyle = `rgba(${tcol}, ${0.4 + 0.3 * Math.sin(this.modeTimer * 26)})`;
+        ctx.lineWidth = 2; ctx.setLineDash([8, 6]);
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(this.aimAngle) * 30, Math.sin(this.aimAngle) * 30);
+        ctx.lineTo(Math.cos(this.aimAngle) * 360, Math.sin(this.aimAngle) * 360);
+        ctx.stroke(); ctx.setLineDash([]);
+        ctx.restore();
+      }
+      ctx.translate(this.x, this.y);
+      ctx.rotate(this.angle);
+      let bladeColor = '#eaeaf0';
+      const tg = this.mode === 'telegraphBeam' || this.mode === 'telegraphSlash' || this.mode === 'telegraphCharge';
+      if (tg && Math.floor(this.modeTimer * 20) % 2 === 0) {
+        bladeColor = this.mode === 'telegraphSlash' ? '#ff8080'
+          : this.mode === 'telegraphBeam' ? '#ff6060' : '#ffcc66';
+      } else if (this.mode === 'charging') bladeColor = '#ff7060';
+      else if (this.mode === 'cooldown' || this.mode === 'beamRecover' || this.mode === 'slashRecover') {
+        bladeColor = '#9a9aa0';
+      }
+      drawSwordBoss2Body(ctx, bladeColor);
+    });
+  }
+}
+
+// ---- ボス2: 弓 — 3連射(壁1反射) / ロックオン射撃(壁2反射, cd5秒) ----
+class BowBoss2 extends Boss {
+  constructor() {
+    super(CENTER.x, CENTER.y - 100);
+    this.r = 28;
+    this.mode = 'idle';
+    this.modeTimer = 1.8;
+    this.shotsLeft = 0;
+    this.shotCooldown = 0;
+    this.aimAngle = 0;
+    this.moveTimer = 0;
+    this.moveDir = { x: 0, y: 0 };
+  }
+  update(dt) {
+    if (!this.alive) return;
+    if (this.hitFlash > 0) this.hitFlash -= dt;
+    this.modeTimer -= dt;
+
+    // 移動: ロックオン溜め中とクールダウン中以外は動く（射撃中も逃げる）
+    const canMove = this.mode !== 'charging' && this.mode !== 'cooldown';
+    if (canMove) {
+      const dxp = player.x - this.x, dyp = player.y - this.y;
+      const distToPlayer = Math.hypot(dxp, dyp);
+      const FLEE_DIST = 220;
+      let speed;
+      if (distToPlayer < FLEE_DIST && distToPlayer > 0.01) {
+        this.moveDir = { x: -dxp / distToPlayer, y: -dyp / distToPlayer };
+        this.moveTimer = 0.3; speed = 2.8;
+      } else {
+        this.moveTimer -= dt;
+        if (this.moveTimer <= 0) {
+          const a = Math.random() * Math.PI * 2;
+          this.moveDir = { x: Math.cos(a), y: Math.sin(a) };
+          this.moveTimer = 1.0 + Math.random();
+        }
+        speed = 1.2;
+      }
+      this.x += this.moveDir.x * speed;
+      this.y += this.moveDir.y * speed;
+      const ddx = this.x - CENTER.x, ddy = this.y - CENTER.y;
+      const d = Math.hypot(ddx, ddy);
+      if (d > ARENA_R - this.r - 30) {
+        this.x = CENTER.x + ddx / d * (ARENA_R - this.r - 30);
+        this.y = CENTER.y + ddy / d * (ARENA_R - this.r - 30);
+        if (distToPlayer < FLEE_DIST) this.moveDir = { x: -ddy / d, y: ddx / d };
+        else this.moveTimer = 0;
+      }
+    }
+
+    const aim = () => {
+      const dx = player.x - this.x, dy = player.y - this.y;
+      this.aimAngle = Math.atan2(dy, dx);
+      const d = Math.hypot(dx, dy) || 1;
+      return { x: dx / d, y: dy / d };
+    };
+
+    if (this.mode === 'idle') {
+      if (this.modeTimer <= 0) {
+        if (Math.random() < 0.3) { this.mode = 'charging'; this.modeTimer = 1.2; }
+        else { this.mode = 'aiming'; this.modeTimer = 0.6; this.shotsLeft = 3; }
+      }
+    } else if (this.mode === 'aiming') {
+      aim();
+      if (this.modeTimer <= 0) { this.mode = 'shooting'; this.shotCooldown = 0; }
+    } else if (this.mode === 'shooting') {
+      const dir = aim();
+      this.shotCooldown -= dt;
+      if (this.shotCooldown <= 0 && this.shotsLeft > 0) {
+        projectiles.push(new Arrow(this.x + dir.x * 32, this.y + dir.y * 32, dir, 1, 5.5));
+        this.shotsLeft--;
+        this.shotCooldown = 0.4;
+      }
+      if (this.shotsLeft <= 0 && this.shotCooldown <= -0.2) {
+        this.mode = 'idle'; this.modeTimer = 1.8;
+      }
+    } else if (this.mode === 'charging') {
+      const dir = aim();
+      if (this.modeTimer <= 0) {
+        projectiles.push(new Arrow(this.x + dir.x * 36, this.y + dir.y * 36, dir, 2, 7.5));
+        this.mode = 'cooldown'; this.modeTimer = 5.0;
+      }
+    } else if (this.mode === 'cooldown') {
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.8; }
+    }
+  }
+  draw(ctx) {
+    this.baseDraw(function() {
+      ctx.translate(this.x, this.y);
+      if (this.mode === 'charging') {
+        const t = 1 - this.modeTimer / 1.2;
+        ctx.fillStyle = `rgba(255, 140, 60, ${0.25 + 0.25 * Math.sin(this.modeTimer * 12)})`;
+        ctx.beginPath(); ctx.arc(0, 0, 40 + t * 18, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.save();
+      if (this.mode === 'cooldown') ctx.globalAlpha = 0.6;
+      ctx.rotate(this.aimAngle);
+      // 弓
+      ctx.strokeStyle = '#5a4630'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(-16, 0, 27, -Math.PI * 0.55, Math.PI * 0.55); ctx.stroke();
+      ctx.lineCap = 'butt';
+      // 弦
+      const sx = -16 + Math.cos(-Math.PI * 0.55) * 27, sy = Math.sin(-Math.PI * 0.55) * 27;
+      const pull = (this.mode === 'aiming' || this.mode === 'charging') ? -12 : -20;
+      ctx.strokeStyle = '#fdf5e1'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(pull, 0); ctx.lineTo(sx, -sy); ctx.stroke();
+      // 矢
+      ctx.strokeStyle = '#5a4630'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(-30, 0); ctx.lineTo(18, 0); ctx.stroke();
+      ctx.fillStyle = '#d4d4dc'; ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(18, -11); ctx.lineTo(36, 0); ctx.lineTo(18, 11); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      // 矢じりの顔
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(21, -5, 2.5, 3.5); ctx.fillRect(26, -5, 2.5, 3.5);
+      ctx.lineWidth = 1.2;
+      drawZigzagMouth(ctx, 21, 2, 9, 3, 3);
+      ctx.restore();
+      // 照準線
+      if (this.mode === 'aiming' || this.mode === 'shooting' || this.mode === 'charging') {
+        const col = this.mode === 'charging' ? 'rgba(255,140,60,0.6)' : 'rgba(255, 60, 60, 0.5)';
+        ctx.strokeStyle = col; ctx.lineWidth = this.mode === 'charging' ? 2 : 1;
+        ctx.setLineDash([6, 6]);
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(this.aimAngle) * 36, Math.sin(this.aimAngle) * 36);
+        ctx.lineTo(Math.cos(this.aimAngle) * 500, Math.sin(this.aimAngle) * 500);
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+    });
+  }
+}
+
+// ---- ボス3: ハンマー — ロックオン叩き / 追跡10秒(cd5秒) / 波動 -------
+class HammerBoss2 extends Boss {
+  constructor() {
+    super(CENTER.x, CENTER.y - 100);
+    this.r = 32;
+    this.mode = 'idle';
+    this.modeTimer = 2.0;
+    this.angle = 0;
+    this.vx = 0; this.vy = 0;
+    this.rageTimer = 0;
+    this.slamStart = null;
+    this.slamTarget = null;
+    this.jumpHeight = 0;
+  }
+  isAttacking() { return this.mode === 'rage'; }
+  update(dt) {
+    if (!this.alive) return;
+    if (this.hitFlash > 0) this.hitFlash -= dt;
+    this.modeTimer -= dt;
+
+    if (this.mode === 'idle') {
+      this.angle += dt * 0.8;
+      if (this.modeTimer <= 0) {
+        const c = Math.random();
+        if (c < 0.34) { this.mode = 'telegraphSlam'; this.modeTimer = 1.0; }
+        else if (c < 0.67) { this.mode = 'telegraphRage'; this.modeTimer = 1.0; }
+        else { this.mode = 'telegraphWave'; this.modeTimer = 1.0; }
+      }
+    } else if (this.mode === 'telegraphSlam') {
+      this.angle += dt * 2;
+      if (this.modeTimer <= 0) {
+        this.slamStart = { x: this.x, y: this.y };
+        this.slamTarget = { x: player.x, y: player.y };
+        this.mode = 'slamJump'; this.modeTimer = 0.9; this.jumpHeight = 0;
+      }
+    } else if (this.mode === 'slamJump') {
+      const t = 1 - this.modeTimer / 0.9;
+      this.x = this.slamStart.x + (this.slamTarget.x - this.slamStart.x) * t;
+      this.y = this.slamStart.y + (this.slamTarget.y - this.slamStart.y) * t;
+      this.jumpHeight = Math.sin(t * Math.PI) * 80;
+      this.angle += dt * 6;
+      if (this.modeTimer <= 0) {
+        this.x = this.slamTarget.x; this.y = this.slamTarget.y; this.jumpHeight = 0;
+        if (player.alive && Math.hypot(player.x - this.x, player.y - this.y) < 72) player.hit();
+        effects.push({ type: 'aoe', x: this.x, y: this.y, r: 72, life: 0.5, maxLife: 0.5 });
+        this.mode = 'slamRecover'; this.modeTimer = 1.5;
+      }
+    } else if (this.mode === 'slamRecover') {
+      this.angle += dt * 0.3;
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.8; }
+    } else if (this.mode === 'telegraphWave') {
+      this.angle += dt * 3;
+      this.jumpHeight = Math.sin((1 - this.modeTimer) * Math.PI) * 20;
+      if (this.modeTimer <= 0) {
+        this.mode = 'waveJump'; this.modeTimer = 0.6; this.jumpHeight = 0;
+      }
+    } else if (this.mode === 'waveJump') {
+      const t = 1 - this.modeTimer / 0.6;
+      this.jumpHeight = Math.sin(t * Math.PI) * 70;
+      this.angle += dt * 5;
+      if (this.modeTimer <= 0) {
+        this.jumpHeight = 0;
+        projectiles.push(new Shockwave(this.x, this.y, 230, 240, 1));
+        effects.push({ type: 'aoe', x: this.x, y: this.y, r: 40, life: 0.4, maxLife: 0.4 });
+        this.mode = 'waveRecover'; this.modeTimer = 1.6;
+      }
+    } else if (this.mode === 'waveRecover') {
+      this.angle += dt * 0.3;
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.8; }
+    } else if (this.mode === 'telegraphRage') {
+      this.angle += dt * 4;
+      if (this.modeTimer <= 0) { this.mode = 'rage'; this.rageTimer = 10.0; }
+    } else if (this.mode === 'rage') {
+      this.angle += dt * 16;
+      this.rageTimer -= dt;
+      const dx = player.x - this.x, dy = player.y - this.y;
+      const d = Math.hypot(dx, dy) || 1;
+      this.vx += (dx / d * 3.0 - this.vx) * 0.06;
+      this.vy += (dy / d * 3.0 - this.vy) * 0.06;
+      this.x += this.vx; this.y += this.vy;
+      const ddx = this.x - CENTER.x, ddy = this.y - CENTER.y;
+      const dd = Math.hypot(ddx, ddy);
+      if (dd > ARENA_R - this.r) {
+        this.x = CENTER.x + ddx / dd * (ARENA_R - this.r);
+        this.y = CENTER.y + ddy / dd * (ARENA_R - this.r);
+      }
+      if (this.mode === 'rage' && player.alive &&
+          Math.hypot(player.x - this.x, player.y - this.y) < this.r + player.r) {
+        player.hit();
+      }
+      if (this.rageTimer <= 0) {
+        this.mode = 'cooldown'; this.modeTimer = 5.0; this.vx = 0; this.vy = 0;
+      }
+    } else if (this.mode === 'cooldown') {
+      this.angle += dt * 0.3;
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.8; }
+    }
+  }
+  draw(ctx) {
+    this.baseDraw(function() {
+      // 叩きつけ予告マーカー
+      if (this.mode === 'slamJump' && this.slamTarget) {
+        ctx.save();
+        ctx.translate(this.slamTarget.x, this.slamTarget.y);
+        const t = 1 - this.modeTimer / 0.9;
+        ctx.strokeStyle = `rgba(220, 60, 60, ${0.6 + 0.4 * Math.sin(t * 30)})`;
+        ctx.fillStyle = 'rgba(220, 60, 60, 0.18)';
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(0, 0, 72, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-72, 0); ctx.lineTo(72, 0); ctx.moveTo(0, -72); ctx.lineTo(0, 72);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.translate(this.x, this.y - (this.jumpHeight || 0));
+      if (this.jumpHeight > 0) {
+        ctx.save();
+        ctx.fillStyle = `rgba(0,0,0,${0.3 - this.jumpHeight / 300})`;
+        ctx.beginPath();
+        ctx.ellipse(0, this.jumpHeight, 30 - this.jumpHeight * 0.15, 8 - this.jumpHeight * 0.04, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.rotate(this.angle);
+      let headColor = '#bcbcc4';
+      const tg = this.mode === 'telegraphRage' || this.mode === 'telegraphSlam' || this.mode === 'telegraphWave';
+      if (tg) {
+        const base = this.mode === 'telegraphSlam' ? '#ff5050'
+          : this.mode === 'telegraphWave' ? '#60a0ff' : '#ff8060';
+        headColor = (Math.floor(this.modeTimer * 20) % 2 === 0) ? base : '#bcbcc4';
+      }
+      if (this.mode === 'rage' || this.mode === 'slamJump') headColor = '#d83030';
+      if (this.mode === 'waveJump') headColor = '#60a0ff';
+      if (this.mode === 'cooldown' || this.mode === 'slamRecover' || this.mode === 'waveRecover') headColor = '#8a8a90';
+      drawHammerBoss2Body(ctx, headColor);
+    });
+  }
+}
+
+// ---- ボス4: 爆弾 — 自爆(cd10秒) / ロックオンビーム / ボム3連投 ------
+class BombBoss2 extends Boss {
+  constructor() {
+    super(CENTER.x, CENTER.y - 100);
+    this.r = 30;
+    this.mode = 'idle';
+    this.modeTimer = 2.2;
+    this.angle = 0;
+    this.fuseSpark = 0;
+    this.bobTimer = 0;
+    this.bombsLeft = 0;
+    this.bombCooldown = 0;
+    this.aimAngle = 0;
+  }
+  isAttacking() { return false; }
+  update(dt) {
+    if (!this.alive) return;
+    if (this.hitFlash > 0) this.hitFlash -= dt;
+    this.modeTimer -= dt;
+    this.fuseSpark += dt * 12;
+    this.bobTimer += dt;
+
+    if (this.mode === 'idle') {
+      const homeY = CENTER.y - 100;
+      this.x += (CENTER.x - this.x) * 0.04;
+      this.y += (homeY - this.y) * 0.04 + Math.sin(this.bobTimer * 2) * 0.3;
+      this.angle = Math.sin(this.bobTimer * 1.5) * 0.08;
+      if (this.modeTimer <= 0) {
+        const c = Math.random();
+        if (c < 0.34) { this.mode = 'selfDestructTele'; this.modeTimer = 0.9; }
+        else if (c < 0.67) { this.mode = 'telegraphBeam'; this.modeTimer = 0.7; }
+        else { this.mode = 'throwTelegraph'; this.modeTimer = 0.5; this.bombsLeft = 3; this.bombCooldown = 0; }
+      }
+    } else if (this.mode === 'telegraphBeam') {
+      const dx = player.x - this.x, dy = player.y - this.y;
+      this.aimAngle = Math.atan2(dy, dx);
+      this.angle += dt * 4;
+      if (this.modeTimer <= 0) {
+        const d = Math.hypot(dx, dy) || 1;
+        projectiles.push(new Beam(this.x, this.y, { x: dx / d, y: dy / d }, 0.3, 0.6));
+        this.mode = 'beamRecover'; this.modeTimer = 1.2;
+      }
+    } else if (this.mode === 'beamRecover') {
+      this.angle = Math.sin(this.bobTimer * 2) * 0.08;
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.6; }
+    } else if (this.mode === 'throwTelegraph') {
+      this.angle += dt * 4;
+      if (this.modeTimer <= 0) { this.mode = 'throwingBombs'; this.modeTimer = 2.0; this.bombCooldown = 0; }
+    } else if (this.mode === 'throwingBombs') {
+      this.bombCooldown -= dt;
+      this.angle = Math.sin(this.bobTimer * 5) * 0.2;
+      if (this.bombCooldown <= 0 && this.bombsLeft > 0) {
+        projectiles.push(new BombProjectile(this.x, this.y, player.x, player.y, 0.8, 55, 'thrown', true));
+        this.bombsLeft--; this.bombCooldown = 0.55;
+      }
+      if (this.bombsLeft <= 0 && this.bombCooldown <= -0.3) { this.mode = 'idle'; this.modeTimer = 1.6; }
+    } else if (this.mode === 'selfDestructTele') {
+      this.angle += dt * 6; this.fuseSpark += dt * 22;
+      if (this.modeTimer <= 0) { this.mode = 'selfDestruct'; this.modeTimer = 1.0; }
+    } else if (this.mode === 'selfDestruct') {
+      this.fuseSpark += dt * 40; this.angle += dt * 4;
+      if (this.modeTimer <= 0) {
+        const explodeR = 110;
+        effects.push({ type: 'aoe', x: this.x, y: this.y, r: explodeR, life: 0.7, maxLife: 0.7 });
+        effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.6 });
+        if (player.alive && Math.hypot(player.x - this.x, player.y - this.y) < explodeR) player.hit();
+        this.mode = 'cooldown'; this.modeTimer = 10.0;
+      }
+    } else if (this.mode === 'cooldown') {
+      this.angle += dt * 0.4;
+      this.x += (CENTER.x - this.x) * 0.006;
+      this.y += ((CENTER.y - 100) - this.y) * 0.006;
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.6; }
+    }
+  }
+  draw(ctx) {
+    this.baseDraw(function() {
+      ctx.translate(this.x, this.y);
+      // 自爆の警告リング
+      if (this.mode === 'selfDestruct') {
+        const t = 1 - this.modeTimer;
+        ctx.strokeStyle = `rgba(255, 60, 60, ${0.6 + 0.4 * Math.sin(t * 30)})`;
+        ctx.fillStyle = 'rgba(255, 60, 60, 0.1)';
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(0, 0, 110, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+      // ビーム予告線
+      if (this.mode === 'telegraphBeam') {
+        ctx.strokeStyle = `rgba(255,80,80, ${0.4 + 0.3 * Math.sin(this.modeTimer * 26)})`;
+        ctx.lineWidth = 2; ctx.setLineDash([8, 6]);
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(this.aimAngle) * 30, Math.sin(this.aimAngle) * 30);
+        ctx.lineTo(Math.cos(this.aimAngle) * 360, Math.sin(this.aimAngle) * 360);
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      let bodyColor = '#3a3a44';
+      if (this.mode === 'selfDestructTele') bodyColor = (Math.floor(this.modeTimer * 18) % 2 === 0) ? '#d04040' : '#3a3a44';
+      else if (this.mode === 'selfDestruct') {
+        const t = 1 - this.modeTimer;
+        bodyColor = (Math.floor(t * 25) % 2 === 0) ? '#ff5050' : '#a01010';
+      } else if (this.mode === 'throwTelegraph' || this.mode === 'telegraphBeam') {
+        bodyColor = (Math.floor(this.modeTimer * 18) % 2 === 0) ? '#806820' : '#3a3a44';
+      } else if (this.mode === 'cooldown') bodyColor = '#5a5a64';
+      let scale = 1;
+      if (this.mode === 'selfDestruct') scale = 1 + (1 - this.modeTimer) * 0.2 + Math.sin(this.fuseSpark) * 0.05;
+      ctx.save();
+      ctx.scale(scale, scale);
+      ctx.rotate(this.angle);
+      drawBombBoss2Body(ctx, this, bodyColor);
+      ctx.restore();
+    });
+  }
+}
+
+// ---- ボス5(ラスボス): トゲ玉 — 突撃 / 円周3周(cd10) / トゲ / 追跡10秒(cd10) ----
+class SpikeBoss extends Boss {
+  constructor() {
+    super(CENTER.x, CENTER.y - 100);
+    this.r = 38;
+    this.maxHp = 150;
+    this.hp = 150;
+    this.mode = 'idle';
+    this.modeTimer = 2.0;
+    this.spinAngle = 0;
+    this.vx = 0; this.vy = 0;
+    this.bounces = 0;
+    this.maxBounces = 4;
+    this.rageTimer = 0;
+    this.circAngle = 0;
+    this.circLaps = 0;
+    this.shotsLeft = 0;
+    this.shotCooldown = 0;
+  }
+  isAttacking() {
+    return this.mode === 'charging' || this.mode === 'circle' || this.mode === 'rage';
+  }
+  update(dt) {
+    if (!this.alive) return;
+    if (this.hitFlash > 0) this.hitFlash -= dt;
+    this.modeTimer -= dt;
+    let spin = 3;
+    if (this.mode === 'charging') spin = 16;
+    else if (this.mode === 'circle') spin = 12;
+    else if (this.mode === 'rage') spin = 14;
+    this.spinAngle += dt * spin;
+
+    const contact = () => {
+      if (player.alive && Math.hypot(player.x - this.x, player.y - this.y) < this.r + player.r) player.hit();
+    };
+
+    if (this.mode === 'idle') {
+      if (this.modeTimer <= 0) {
+        const c = Math.random();
+        if (c < 0.28) { this.mode = 'telegraphCharge'; this.modeTimer = 0.7; }
+        else if (c < 0.5) { this.mode = 'telegraphSpikes'; this.modeTimer = 0.7; }
+        else if (c < 0.75) { this.mode = 'telegraphCircle'; this.modeTimer = 0.8; }
+        else { this.mode = 'telegraphRage'; this.modeTimer = 0.9; }
+      }
+    } else if (this.mode === 'telegraphCharge') {
+      if (this.modeTimer <= 0) {
+        const dx = player.x - this.x, dy = player.y - this.y;
+        const d = Math.hypot(dx, dy) || 1;
+        this.vx = dx / d * 5.6; this.vy = dy / d * 5.6;
+        this.bounces = 0;
+        this.mode = 'charging'; this.modeTimer = 6.0;
+      }
+    } else if (this.mode === 'charging') {
+      this.x += this.vx; this.y += this.vy;
+      const ddx = this.x - CENTER.x, ddy = this.y - CENTER.y;
+      const d = Math.hypot(ddx, ddy);
+      if (d > ARENA_R - this.r) {
+        const nx = ddx / d, ny = ddy / d;
+        this.x = CENTER.x + nx * (ARENA_R - this.r);
+        this.y = CENTER.y + ny * (ARENA_R - this.r);
+        const dot = this.vx * nx + this.vy * ny;
+        this.vx -= 2 * dot * nx; this.vy -= 2 * dot * ny;
+        this.bounces++;
+        effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+        if (this.bounces >= this.maxBounces) { this.vx = 0; this.vy = 0; this.mode = 'idle'; this.modeTimer = 0.8; }
+      }
+      if (this.mode === 'charging') contact();
+      if (this.mode === 'charging' && this.modeTimer <= 0) { this.vx = 0; this.vy = 0; this.mode = 'idle'; this.modeTimer = 0.8; }
+    } else if (this.mode === 'telegraphSpikes') {
+      if (this.modeTimer <= 0) { this.mode = 'spikes'; this.modeTimer = 1.6; this.shotsLeft = 5; this.shotCooldown = 0; }
+    } else if (this.mode === 'spikes') {
+      this.shotCooldown -= dt;
+      if (this.shotCooldown <= 0 && this.shotsLeft > 0) {
+        const dx = player.x - this.x, dy = player.y - this.y;
+        const base = Math.atan2(dy, dx);
+        // プレイヤー方向に扇状で3本
+        for (const off of [-0.22, 0, 0.22]) {
+          projectiles.push(new Spike(this.x, this.y, { x: Math.cos(base + off), y: Math.sin(base + off) }, 6.2));
+        }
+        this.shotsLeft--; this.shotCooldown = 0.32;
+      }
+      if (this.shotsLeft <= 0 && this.shotCooldown <= -0.2) { this.mode = 'idle'; this.modeTimer = 1.0; }
+    } else if (this.mode === 'telegraphCircle') {
+      const dx = this.x - CENTER.x, dy = this.y - CENTER.y;
+      this.circAngle = Math.atan2(dy, dx);
+      const r = ARENA_R - this.r - 12;
+      const tx = CENTER.x + Math.cos(this.circAngle) * r, ty = CENTER.y + Math.sin(this.circAngle) * r;
+      this.x += (tx - this.x) * 0.2; this.y += (ty - this.y) * 0.2;
+      if (this.modeTimer <= 0) { this.mode = 'circle'; this.circLaps = 0; }
+    } else if (this.mode === 'circle') {
+      const dA = dt * 2.0;
+      this.circAngle += dA;
+      this.circLaps += dA;
+      const r = ARENA_R - this.r - 12;
+      this.x = CENTER.x + Math.cos(this.circAngle) * r;
+      this.y = CENTER.y + Math.sin(this.circAngle) * r;
+      contact();
+      if (this.circLaps >= Math.PI * 2 * 3) { this.mode = 'cooldown'; this.modeTimer = 10.0; }
+    } else if (this.mode === 'telegraphRage') {
+      if (this.modeTimer <= 0) { this.mode = 'rage'; this.rageTimer = 10.0; }
+    } else if (this.mode === 'rage') {
+      this.rageTimer -= dt;
+      const dx = player.x - this.x, dy = player.y - this.y;
+      const d = Math.hypot(dx, dy) || 1;
+      this.vx += (dx / d * 2.6 - this.vx) * 0.05;
+      this.vy += (dy / d * 2.6 - this.vy) * 0.05;
+      this.x += this.vx; this.y += this.vy;
+      const ddx = this.x - CENTER.x, ddy = this.y - CENTER.y;
+      const dd = Math.hypot(ddx, ddy);
+      if (dd > ARENA_R - this.r) { this.x = CENTER.x + ddx / dd * (ARENA_R - this.r); this.y = CENTER.y + ddy / dd * (ARENA_R - this.r); }
+      if (this.mode === 'rage') contact();
+      if (this.rageTimer <= 0) { this.mode = 'cooldown'; this.modeTimer = 10.0; this.vx = 0; this.vy = 0; }
+    } else if (this.mode === 'cooldown') {
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.2; }
+    }
+  }
+  draw(ctx) {
+    this.baseDraw(function() {
+      let color = this.revived ? '#c9b8d8' : '#d2d6dd';
+      if (this.mode === 'charging' || this.mode === 'rage') color = '#ff7060';
+      else if (this.mode === 'circle') color = '#ff9050';
+      else if (this.mode === 'cooldown') color = '#9a9aa0';
+      else if (this.mode.startsWith('telegraph') && Math.floor(this.modeTimer * 18) % 2 === 0) color = '#ffb060';
+      const gx = player.x - this.x, gy = player.y - this.y;
+      const gd = Math.hypot(gx, gy) || 1;
+      drawSpikeBall(ctx, this.x, this.y, this.r, this.spinAngle, color, { x: gx / gd, y: gy / gd });
+      // トゲ予告線
+      if (this.mode === 'telegraphSpikes') {
+        ctx.save(); ctx.translate(this.x, this.y);
+        const a = Math.atan2(gy, gx);
+        ctx.strokeStyle = `rgba(255,80,60,${0.4 + 0.3 * Math.sin(this.modeTimer * 26)})`;
+        ctx.lineWidth = 2; ctx.setLineDash([7, 6]);
+        ctx.beginPath(); ctx.moveTo(Math.cos(a) * 40, Math.sin(a) * 40); ctx.lineTo(Math.cos(a) * 340, Math.sin(a) * 340);
+        ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+      }
+    });
+  }
+}
+
+// ---- ボス6(隠し): なぞのボス — 6パーツ合体で登場、2形態 -------------
+// 形態1: ボム3連投 / ビーム(cd) / 矢(cd)
+// 形態2: + 斬撃 / 突撃(cd)
+class CompositeBoss extends Boss {
+  constructor() {
+    super(CENTER.x, CENTER.y - 60);
+    this.r = 40;
+    this.maxHp = 150;
+    this.hp = 150;
+    this.revived = false; // 一度倒すと第二形態
+    this.mode = 'intro';
+    this.modeTimer = 2.2;
+    this.angle = 0;
+    this.fuseSpark = 0;
+    this.bobTimer = 0;
+    this.aimAngle = 0;
+    this.bombsLeft = 0;
+    this.bombCooldown = 0;
+    this.vx = 0; this.vy = 0;
+    this.bounces = 0;
+    this.maxBounces = 3;
+  }
+  isAttacking() { return this.mode === 'charging'; }
+  takeDamage(amount) {
+    if (!this.alive) return;
+    if (this.mode === 'intro' || this.mode === 'reviving') return;
+    this.hp -= amount;
+    this.hitFlash = 0.18;
+    if (this.hp <= 0) {
+      if (!this.revived) {
+        this.revived = true;
+        this.hp = 150;
+        this.mode = 'reviving';
+        this.modeTimer = 1.8;
+        this.vx = 0; this.vy = 0;
+        effects.push({ type: 'bossDeath', x: this.x, y: this.y, life: 1.0, maxLife: 1.0 });
+        effects.push({ type: 'aoe', x: this.x, y: this.y, r: 95, life: 0.6, maxLife: 0.6 });
+        return;
+      }
+      this.hp = 0;
+      this.alive = false;
+      effects.push({ type: 'bossDeath', x: this.x, y: this.y, life: 1.5, maxLife: 1.5 });
+    }
+  }
+  pickNextAttack() {
+    const c = Math.random();
+    if (!this.revived) {
+      if (c < 0.4) { this.mode = 'throwTelegraph'; this.modeTimer = 0.5; this.bombsLeft = 3; this.bombCooldown = 0; }
+      else if (c < 0.7) { this.mode = 'telegraphBeam'; this.modeTimer = 0.7; }
+      else { this.mode = 'telegraphArrow'; this.modeTimer = 0.6; }
+      return;
+    }
+    if (c < 0.24) { this.mode = 'throwTelegraph'; this.modeTimer = 0.5; this.bombsLeft = 3; this.bombCooldown = 0; }
+    else if (c < 0.46) { this.mode = 'telegraphBeam'; this.modeTimer = 0.7; }
+    else if (c < 0.66) { this.mode = 'telegraphArrow'; this.modeTimer = 0.6; }
+    else if (c < 0.84) { this.mode = 'telegraphSlash'; this.modeTimer = 0.6; }
+    else { this.mode = 'telegraphCharge'; this.modeTimer = 0.7; }
+  }
+  aim() {
+    const dx = player.x - this.x, dy = player.y - this.y;
+    this.aimAngle = Math.atan2(dy, dx);
+    const d = Math.hypot(dx, dy) || 1;
+    return { x: dx / d, y: dy / d };
+  }
+  update(dt) {
+    if (!this.alive) return;
+    if (this.hitFlash > 0) this.hitFlash -= dt;
+    this.modeTimer -= dt;
+    this.fuseSpark += dt * 12;
+    this.bobTimer += dt;
+
+    if (this.mode === 'intro') {
+      this.fuseSpark += dt * 20;
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.2; }
+      return;
+    } else if (this.mode === 'reviving') {
+      this.fuseSpark += dt * 30;
+      this.angle += dt * 8;
+      this.x += (CENTER.x - this.x) * 0.05;
+      this.y += ((CENTER.y - 60) - this.y) * 0.05;
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.2; }
+      return;
+    }
+
+    if (this.mode === 'idle') {
+      this.x += (CENTER.x - this.x) * 0.04;
+      this.y += ((CENTER.y - 60) - this.y) * 0.04 + Math.sin(this.bobTimer * 2) * 0.3;
+      this.angle = Math.sin(this.bobTimer * 1.5) * 0.06;
+      if (this.modeTimer <= 0) this.pickNextAttack();
+    } else if (this.mode === 'throwTelegraph') {
+      this.angle += dt * 4;
+      if (this.modeTimer <= 0) { this.mode = 'throwingBombs'; this.modeTimer = 2.0; this.bombCooldown = 0; }
+    } else if (this.mode === 'throwingBombs') {
+      this.bombCooldown -= dt;
+      this.angle = Math.sin(this.bobTimer * 5) * 0.16;
+      if (this.bombCooldown <= 0 && this.bombsLeft > 0) {
+        projectiles.push(new BombProjectile(this.x, this.y, player.x, player.y, 0.8, 55, 'thrown', true));
+        this.bombsLeft--; this.bombCooldown = 0.55;
+      }
+      if (this.bombsLeft <= 0 && this.bombCooldown <= -0.3) { this.mode = 'idle'; this.modeTimer = 1.5; }
+    } else if (this.mode === 'telegraphBeam') {
+      this.aim(); this.angle += dt * 4;
+      if (this.modeTimer <= 0) {
+        const dir = this.aim();
+        projectiles.push(new Beam(this.x, this.y, dir, 0.3, 0.6));
+        this.mode = 'beamCooldown'; this.modeTimer = 2.6;
+      }
+    } else if (this.mode === 'beamCooldown') {
+      this.angle = Math.sin(this.bobTimer * 2) * 0.06;
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.2; }
+    } else if (this.mode === 'telegraphArrow') {
+      this.aim(); this.angle += dt * 5;
+      if (this.modeTimer <= 0) {
+        const dir = this.aim();
+        projectiles.push(new Arrow(this.x + dir.x * 30, this.y + dir.y * 30, dir, 1, 7));
+        this.mode = 'arrowCooldown'; this.modeTimer = 2.0;
+      }
+    } else if (this.mode === 'arrowCooldown') {
+      this.angle = Math.sin(this.bobTimer * 2) * 0.06;
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.0; }
+    } else if (this.mode === 'telegraphSlash') {
+      const dir = this.aim(); this.angle += dt * 5;
+      if (this.modeTimer <= 0) {
+        projectiles.push(new BossSlash(this.x, this.y, dir));
+        this.mode = 'slashRecover'; this.modeTimer = 1.0;
+      }
+    } else if (this.mode === 'slashRecover') {
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.0; }
+    } else if (this.mode === 'telegraphCharge') {
+      this.angle += dt * 4;
+      const dir = this.aim();
+      if (this.modeTimer <= 0) {
+        this.vx = dir.x * 6.4; this.vy = dir.y * 6.4; this.bounces = 0;
+        this.mode = 'charging'; this.modeTimer = 4.5;
+      }
+    } else if (this.mode === 'charging') {
+      this.angle += dt * 12;
+      this.x += this.vx; this.y += this.vy;
+      const ddx = this.x - CENTER.x, ddy = this.y - CENTER.y;
+      const d = Math.hypot(ddx, ddy);
+      if (d > ARENA_R - this.r) {
+        const nx = ddx / d, ny = ddy / d;
+        this.x = CENTER.x + nx * (ARENA_R - this.r);
+        this.y = CENTER.y + ny * (ARENA_R - this.r);
+        const dot = this.vx * nx + this.vy * ny;
+        this.vx -= 2 * dot * nx; this.vy -= 2 * dot * ny;
+        this.bounces++;
+        if (this.bounces >= this.maxBounces) { this.vx = 0; this.vy = 0; this.mode = 'chargeCooldown'; this.modeTimer = 4.0; }
+      }
+      if (this.mode === 'charging' && player.alive &&
+          Math.hypot(player.x - this.x, player.y - this.y) < this.r + player.r) {
+        player.hit();
+      }
+      if (this.mode === 'charging' && this.modeTimer <= 0) { this.vx = 0; this.vy = 0; this.mode = 'chargeCooldown'; this.modeTimer = 4.0; }
+    } else if (this.mode === 'chargeCooldown') {
+      this.angle += dt * 0.4;
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.2; }
+    }
+  }
+  draw(ctx) {
+    this.baseDraw(function() {
+      if (this.mode === 'intro') {
+        drawCompositeIntro(ctx, this);
+        return;
+      }
+      // 復活オーラ
+      if (this.mode === 'reviving') {
+        const t = 1 - this.modeTimer / 1.8;
+        ctx.save(); ctx.translate(this.x, this.y);
+        ctx.strokeStyle = `rgba(180, 80, 255, ${0.75 - t * 0.45})`;
+        ctx.fillStyle = 'rgba(180, 80, 255, 0.16)';
+        ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(0, 0, 55 + Math.sin(t * 28) * 10, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.restore();
+      }
+      // 各種予告線
+      if (this.mode === 'telegraphBeam' || this.mode === 'telegraphArrow' ||
+          this.mode === 'telegraphSlash' || this.mode === 'telegraphCharge') {
+        ctx.save(); ctx.translate(this.x, this.y);
+        const col = this.mode === 'telegraphCharge' ? '255,140,60' : '255,80,80';
+        ctx.strokeStyle = `rgba(${col}, ${0.4 + 0.3 * Math.sin(this.modeTimer * 26)})`;
+        ctx.lineWidth = 2; ctx.setLineDash([8, 6]);
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(this.aimAngle) * 36, Math.sin(this.aimAngle) * 36);
+        ctx.lineTo(Math.cos(this.aimAngle) * 360, Math.sin(this.aimAngle) * 360);
+        ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+      }
+      let bodyColor = this.revived ? '#5a3a6a' : '#4a4a58';
+      if (this.mode === 'charging') bodyColor = '#d04040';
+      else if (this.mode === 'reviving') bodyColor = (Math.floor(this.modeTimer * 25) % 2 === 0) ? '#c060ff' : '#ff6060';
+      else if (this.mode.startsWith('telegraph') && Math.floor(this.modeTimer * 18) % 2 === 0) bodyColor = '#a06030';
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      ctx.rotate(this.angle);
+      drawCompositeBody(ctx, this, bodyColor);
+      ctx.restore();
+    });
+  }
+}
+
+// =====================================================================
 // 描画ヘルパー
 // =====================================================================
 // 共通: ジグザグの歯
@@ -3047,6 +4162,263 @@ function drawSawHand(ctx, x, y, side, telegraph) {
   ctx.restore();
 }
 
+// ---- ゲーム2: ボスの体パーツ描画 -------------------------------------
+function drawSwordBoss2Body(ctx, bladeColor) {
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 2.5;
+  const bladeLen = 58, bladeW = 30;
+  // 丸い頭（刃の先）
+  ctx.fillStyle = '#6a6a74';
+  ctx.beginPath();
+  ctx.arc(0, -bladeLen - 6, 9, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke();
+  // 刃
+  ctx.fillStyle = bladeColor;
+  ctx.beginPath();
+  ctx.moveTo(-bladeW / 2, 18);
+  ctx.lineTo(bladeW / 2, 18);
+  ctx.lineTo(bladeW / 2, -bladeLen + 10);
+  ctx.lineTo(0, -bladeLen);
+  ctx.lineTo(-bladeW / 2, -bladeLen + 10);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // 鍔
+  ctx.fillStyle = '#3a2818';
+  ctx.fillRect(-26, 18, 52, 8); ctx.strokeRect(-26, 18, 52, 8);
+  // ジグザグ
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2;
+  drawZigzagMouth(ctx, -22, 9, 44, 8, 5);
+  // 柄
+  ctx.fillStyle = '#7a4f20';
+  ctx.fillRect(-5, 26, 10, 14); ctx.strokeRect(-5, 26, 10, 14);
+  ctx.fillStyle = '#d4a040';
+  ctx.beginPath(); ctx.arc(0, 42, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // 顔（刃の上）
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(-8, -28, 5, 7); ctx.fillRect(3, -28, 5, 7);
+}
+
+function drawHammerBoss2Body(ctx, headColor) {
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 2.4;
+  const hw = 56, hh = 30, topY = -hh / 2 - 5;
+  // 角（2本、内側に湾曲）
+  ctx.fillStyle = '#efe9d8';
+  for (const sgn of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(sgn * 14, topY + 2);
+    ctx.quadraticCurveTo(sgn * 30, topY - 26, sgn * 8, topY - 32);
+    ctx.quadraticCurveTo(sgn * 16, topY - 16, sgn * 6, topY);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  }
+  // 柄
+  ctx.fillStyle = '#7a4f20';
+  ctx.fillRect(-4, hh / 2 - 5, 8, 34); ctx.strokeRect(-4, hh / 2 - 5, 8, 34);
+  // 頭部
+  ctx.fillStyle = headColor;
+  ctx.fillRect(-hw / 2, topY, hw, hh); ctx.strokeRect(-hw / 2, topY, hw, hh);
+  // 両端の出っ張り
+  ctx.fillStyle = '#5a5a64';
+  ctx.fillRect(-hw / 2 - 6, topY + 3, 7, hh - 6); ctx.strokeRect(-hw / 2 - 6, topY + 3, 7, hh - 6);
+  ctx.fillRect(hw / 2 - 1, topY + 3, 7, hh - 6); ctx.strokeRect(hw / 2 - 1, topY + 3, 7, hh - 6);
+  // 怒り目
+  ctx.fillStyle = '#1a1a1a';
+  ctx.save(); ctx.translate(-9, topY + 14);
+  ctx.beginPath(); ctx.moveTo(-4, -2); ctx.lineTo(5, 2); ctx.lineTo(5, 5); ctx.lineTo(-4, 5); ctx.closePath(); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(9, topY + 14);
+  ctx.beginPath(); ctx.moveTo(4, -2); ctx.lineTo(-5, 2); ctx.lineTo(-5, 5); ctx.lineTo(4, 5); ctx.closePath(); ctx.fill(); ctx.restore();
+  // ジグザグ歯
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2;
+  drawZigzagMouth(ctx, -14, topY + 20, 28, 6, 5);
+}
+
+function drawBombBoss2Body(ctx, boss, bodyColor) {
+  const r = boss.r;
+  ctx.fillStyle = bodyColor;
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // 四分割線
+  ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(0, r); ctx.moveTo(-r, 0); ctx.lineTo(r, 0); ctx.stroke();
+  // ハイライト
+  ctx.fillStyle = 'rgba(255,255,255,0.14)';
+  ctx.beginPath(); ctx.arc(-r * 0.35, -r * 0.4, r * 0.26, 0, Math.PI * 2); ctx.fill();
+  // 導火線（長くうねる）
+  ctx.strokeStyle = '#3a2818'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(0, -r);
+  ctx.bezierCurveTo(-12, -r - 14, 14, -r - 26, 4, -r - 40);
+  ctx.stroke(); ctx.lineCap = 'butt';
+  const sr = 4 + Math.sin(boss.fuseSpark) * 1.5;
+  ctx.fillStyle = '#ffd040'; ctx.beginPath(); ctx.arc(4, -r - 40, sr, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff5b0'; ctx.beginPath(); ctx.arc(4, -r - 40, sr * 0.55, 0, Math.PI * 2); ctx.fill();
+  // 左の小さい四角目
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2;
+  roundRect(ctx, -r * 0.55, -2, 13, 13, 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#1a1a1a';
+  ctx.beginPath(); ctx.arc(-r * 0.55 + 6, 5, 2.4, 0, Math.PI * 2); ctx.fill();
+  // 右の大きい渦巻き目
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, r * 0.12, -9, 21, 21, 3); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1.6;
+  const cx2 = r * 0.12 + 10, cy2 = 2;
+  ctx.beginPath();
+  for (let i = 0; i < 16; i++) {
+    const rr = i * 0.5, a = i * 0.6;
+    const px = cx2 + Math.cos(a) * rr, py = cy2 + Math.sin(a) * rr;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+}
+
+function drawSpikeBall(ctx, x, y, r, spin, color, gaze) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.save();
+  ctx.rotate(spin);
+  ctx.fillStyle = color; ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2.4;
+  const spikes = 9;
+  // トゲ
+  for (let i = 0; i < spikes; i++) {
+    const a = (i / spikes) * Math.PI * 2;
+    const a1 = a - 0.16, a2 = a + 0.16;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a1) * r, Math.sin(a1) * r);
+    ctx.lineTo(Math.cos(a) * (r + 20), Math.sin(a) * (r + 20));
+    ctx.lineTo(Math.cos(a2) * r, Math.sin(a2) * r);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  // 本体（多角形）
+  ctx.beginPath();
+  for (let i = 0; i < spikes; i++) {
+    const a = (i / spikes) * Math.PI * 2;
+    const px = Math.cos(a) * r, py = Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+  // 中央の大きな目（回転しない）
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2.4;
+  ctx.beginPath(); ctx.ellipse(0, 0, r * 0.32, r * 0.42, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  const gx = gaze ? gaze.x * 5 : 0, gy = gaze ? gaze.y * 5 : 0;
+  ctx.fillStyle = '#1a1a1a';
+  ctx.beginPath(); ctx.arc(gx, gy, r * 0.16, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(gx - 2, gy - 2, r * 0.06, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+function drawCompositeBody(ctx, boss, bodyColor) {
+  const r = boss.r;
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2.5;
+  // 本体（八角形）
+  ctx.fillStyle = bodyColor;
+  ctx.beginPath();
+  const sides = 8;
+  for (let i = 0; i < sides; i++) {
+    const a = (i / sides) * Math.PI * 2 + Math.PI / 8;
+    const px = Math.cos(a) * r, py = Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  // 上の導火線（ボム要素）
+  ctx.strokeStyle = '#3a2818'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-4, -r + 4); ctx.bezierCurveTo(-14, -r - 12, 8, -r - 22, 2, -r - 34); ctx.stroke();
+  ctx.lineCap = 'butt';
+  const sr = 3.5 + Math.sin(boss.fuseSpark) * 1.4;
+  ctx.fillStyle = '#ffd040'; ctx.beginPath(); ctx.arc(2, -r - 34, sr, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff5b0'; ctx.beginPath(); ctx.arc(2, -r - 34, sr * 0.5, 0, Math.PI * 2); ctx.fill();
+  // 右上のギザ冠（ハンマー角の要素）
+  ctx.fillStyle = '#d8d2c0'; ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(r * 0.3, -r * 0.7);
+  ctx.lineTo(r * 0.55, -r * 1.15);
+  ctx.lineTo(r * 0.6, -r * 0.72);
+  ctx.lineTo(r * 0.85, -r * 1.0);
+  ctx.lineTo(r * 0.92, -r * 0.5);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  // 左のトゲ（剣/トゲ要素）
+  ctx.fillStyle = '#9a9aa6';
+  ctx.beginPath(); ctx.moveTo(-r * 0.85, -r * 0.12); ctx.lineTo(-r * 1.4, -r * 0.05); ctx.lineTo(-r * 0.85, r * 0.18); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // 右下のビーム玉
+  ctx.fillStyle = '#ff7a4a';
+  ctx.beginPath(); ctx.arc(r * 0.95, r * 0.5, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // 左下の矢（弓要素）
+  ctx.save();
+  ctx.translate(-r * 0.5, r * 0.7); ctx.rotate(Math.PI * 0.75);
+  ctx.strokeStyle = '#3a6a3a'; ctx.fillStyle = '#2f7a3a'; ctx.lineWidth = 2.4;
+  ctx.beginPath(); ctx.moveTo(-12, 0); ctx.lineTo(8, 0); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(6, -5); ctx.lineTo(6, 5); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+  // 目（左:丸 / 右:四角）
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(-r * 0.32, -r * 0.08, 8, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#1a1a1a'; ctx.beginPath(); ctx.arc(-r * 0.32, -r * 0.08, 3.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff';
+  roundRect(ctx, r * 0.16, -r * 0.22, 16, 16, 3); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#1a1a1a'; ctx.beginPath(); ctx.arc(r * 0.16 + 8, -r * 0.22 + 8, 3, 0, Math.PI * 2); ctx.fill();
+  // ジグザグの口
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2;
+  drawZigzagMouth(ctx, -12, r * 0.32, 24, 5, 5);
+}
+
+// 隠しボスの登場演出: 6パーツが上から降ってきて合体する
+function drawCompositeIntro(ctx, boss) {
+  const total = 2.2;
+  const p = 1 - boss.modeTimer / total;
+  const parts = [
+    { x: 0, y: -boss.r }, { x: boss.r * 0.6, y: -boss.r * 0.5 }, { x: boss.r * 0.7, y: boss.r * 0.4 },
+    { x: 0, y: boss.r * 0.7 }, { x: -boss.r * 0.7, y: boss.r * 0.4 }, { x: -boss.r * 0.6, y: -boss.r * 0.5 },
+  ];
+  for (let i = 0; i < parts.length; i++) {
+    const start = i * 0.12;
+    let lp = (p - start) / (1 - start);
+    lp = Math.max(0, Math.min(1, lp));
+    const ease = 1 - (1 - lp) * (1 - lp);
+    const fromY = -360;
+    const tx = boss.x + parts[i].x;
+    const ty = boss.y + parts[i].y;
+    const py = fromY + (ty - fromY) * ease;
+    ctx.save();
+    ctx.translate(tx, py);
+    ctx.rotate((1 - ease) * 6 + i);
+    ctx.globalAlpha = 0.3 + 0.7 * ease;
+    ctx.fillStyle = i % 2 === 0 ? '#5a3a6a' : '#9a9aa6';
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, 0, 12, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  if (p > 0.8) {
+    ctx.save();
+    ctx.globalAlpha = (p - 0.8) / 0.2;
+    ctx.translate(boss.x, boss.y);
+    drawCompositeBody(ctx, boss, boss.revived ? '#5a3a6a' : '#4a4a58');
+    ctx.restore();
+  }
+}
+
+// プレイヤーの弓（持ち手の前に構える）。drawn=構え中は矢をつがえる。
+function drawBow(ctx, x, y, size, drawn) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = '#5a4630'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(-2, 0, size, -Math.PI * 0.6, Math.PI * 0.6); ctx.stroke();
+  ctx.lineCap = 'butt';
+  const ex = -2 + Math.cos(-Math.PI * 0.6) * size, ey = Math.sin(-Math.PI * 0.6) * size;
+  ctx.strokeStyle = '#eee'; ctx.lineWidth = 1.2;
+  const pull = drawn ? -8 : -2;
+  ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(pull, 0); ctx.lineTo(ex, -ey); ctx.stroke();
+  if (drawn) {
+    ctx.strokeStyle = '#3a6a3a'; ctx.fillStyle = '#2f7a3a'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(pull, 0); ctx.lineTo(size + 4, 0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(size + 8, 0); ctx.lineTo(size + 1, -4); ctx.lineTo(size + 1, 4); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawHeldWeapon(ctx, weapon, fx, fy, options) {
   const ang = Math.atan2(fy, fx);
   ctx.save();
@@ -3062,6 +4434,9 @@ function drawHeldWeapon(ctx, weapon, fx, fy, options) {
   } else if (weapon === 'hammer') {
     ctx.rotate(ang + Math.PI / 2 + (options.hammerSwing || 0));
     drawHammer(ctx, 0, -14, 20);
+  } else if (weapon === 'bow') {
+    ctx.rotate(ang);
+    drawBow(ctx, 14, 0, options.bowAiming ? 16 : 13, !!options.bowAiming);
   }
   ctx.restore();
 }
@@ -3206,20 +4581,103 @@ function drawHero(ctx, x, y, weapon, facing, bobOffset, options = {}) {
 }
 
 // =====================================================================
+// ゲーム選択画面（タイトル）
+// =====================================================================
+function gameSelectButtons() {
+  const w = 280, h = 220, gap = 60;
+  const totalW = w * 2 + gap;
+  const x0 = (W - totalW) / 2;
+  const y = 230;
+  return [
+    { x: x0, y, w, h, game: 1, locked: false },
+    { x: x0 + w + gap, y, w, h, game: 2, locked: !game1Cleared },
+  ];
+}
+
+function drawLock(ctx, x, y, s) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = '#888'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.arc(0, -s * 0.2, s * 0.5, Math.PI, 0); ctx.stroke();
+  ctx.fillStyle = '#b8b8b8'; ctx.strokeStyle = '#888'; ctx.lineWidth = 2;
+  roundRect(ctx, -s * 0.6, -s * 0.2, s * 1.2, s * 0.95, 4); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#888';
+  ctx.beginPath(); ctx.arc(0, s * 0.22, s * 0.12, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+function drawGameSelect(dt) {
+  ctx.fillStyle = '#fafafa';
+  ctx.fillRect(0, 0, W, H);
+  const grd = ctx.createLinearGradient(0, H * 0.7, 0, H);
+  grd.addColorStop(0, 'rgba(0,0,0,0)');
+  grd.addColorStop(1, 'rgba(0,0,0,0.08)');
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, H * 0.7, W, H * 0.3);
+  // タイトル
+  ctx.fillStyle = '#222';
+  ctx.font = 'bold 50px serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('剣士シールド', W / 2, 120);
+  ctx.font = '20px sans-serif';
+  ctx.fillStyle = '#555';
+  ctx.fillText('あそぶ ゲームを えらんでね', W / 2, 160);
+
+  for (const b of gameSelectButtons()) {
+    const hover = !b.locked && mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+    ctx.fillStyle = b.locked ? '#e6e6e6' : (hover ? '#fff7d0' : '#fff');
+    ctx.strokeStyle = b.locked ? '#bbb' : (hover ? '#e0b020' : '#888');
+    ctx.lineWidth = hover ? 4 : 2;
+    roundRect(ctx, b.x, b.y, b.w, b.h, 16);
+    ctx.fill(); ctx.stroke();
+    const cx = b.x + b.w / 2;
+    ctx.fillStyle = b.locked ? '#999' : '#222';
+    ctx.font = 'bold 30px serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(b.game === 1 ? '剣士シールド' : '剣士シールド2', cx, b.y + 56);
+    if (b.game === 1) {
+      drawShield(ctx, cx, b.y + 120, 28);
+      drawSword(ctx, cx - 44, b.y + 150, 46);
+      drawHammer(ctx, cx + 44, b.y + 150, 46);
+      ctx.fillStyle = '#666'; ctx.font = '15px sans-serif';
+      ctx.fillText('ボス4体 + 隠しボス', cx, b.y + 196);
+    } else if (!b.locked) {
+      drawSpikeBall(ctx, cx - 40, b.y + 130, 28, performance.now() / 600, '#d2d6dd', { x: 0, y: 0 });
+      ctx.save(); ctx.translate(cx + 56, b.y + 140); ctx.rotate(-Math.PI / 2); drawBow(ctx, 0, 0, 22, true); ctx.restore();
+      ctx.fillStyle = '#666'; ctx.font = '15px sans-serif';
+      ctx.fillText('新武器「弓」＆ボス5体 + 隠しボス', cx, b.y + 196);
+    } else {
+      drawLock(ctx, cx, b.y + 115, 26);
+      ctx.fillStyle = '#888'; ctx.font = '16px sans-serif';
+      ctx.fillText('ゲーム1をクリアすると', cx, b.y + 170);
+      ctx.fillText('あそべるよ', cx, b.y + 194);
+    }
+  }
+  ctx.fillStyle = '#777';
+  ctx.font = '14px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('クリック / タップ で せんたく', W / 2, 500);
+}
+
+// =====================================================================
 // 武器選択画面
 // =====================================================================
+const WEAPON_NAME = { sword: '剣', shield: '盾', hammer: 'ハンマー', bow: '弓' };
 function weaponButtons() {
-  const startX = 380;
+  const weapons = availableWeapons();
+  const w = 100, h = 130, gap = 24;
+  const n = weapons.length;
+  const totalW = n * w + (n - 1) * gap;
+  // 主人公が左にいるので少し右寄りに配置
+  const startX = (W - totalW) / 2 + 40;
   const y = 280;
-  const gap = 130;
-  return [
-    { x: startX, y, w: 100, h: 130, weapon: 'sword', label: '剣' },
-    { x: startX + gap, y, w: 100, h: 130, weapon: 'shield', label: '盾' },
-    { x: startX + gap * 2, y, w: 100, h: 130, weapon: 'hammer', label: 'ハンマー' },
-  ];
+  return weapons.map((wp, i) => ({ x: startX + i * (w + gap), y, w, h, weapon: wp, label: WEAPON_NAME[wp] }));
 }
 function startButton() {
   return { x: W / 2 - 100, y: 560, w: 200, h: 60 };
+}
+function backButton() {
+  return { x: 24, y: 24, w: 96, h: 40 };
 }
 
 function drawWeaponSelect(dt) {
@@ -3236,10 +4694,22 @@ function drawWeaponSelect(dt) {
   ctx.fillStyle = '#222';
   ctx.font = 'bold 42px serif';
   ctx.textAlign = 'center';
-  ctx.fillText('剣士シールド', W / 2, 80);
+  ctx.fillText(currentGame === 2 ? '剣士シールド2' : '剣士シールド', W / 2, 80);
   ctx.font = '18px sans-serif';
   ctx.fillStyle = '#555';
   ctx.fillText('武器を えらんでね', W / 2, 115);
+  // 戻るボタン（ゲーム選択へ）
+  const back = backButton();
+  const backHover = mouse.x >= back.x && mouse.x <= back.x + back.w && mouse.y >= back.y && mouse.y <= back.y + back.h;
+  ctx.fillStyle = backHover ? '#e8e8e8' : '#fff';
+  ctx.strokeStyle = '#999'; ctx.lineWidth = 2;
+  roundRect(ctx, back.x, back.y, back.w, back.h, 8);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#444';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('← もどる', back.x + back.w / 2, back.y + back.h / 2);
+  ctx.textBaseline = 'alphabetic';
   // 主人公（左側）
   const heroX = 180, heroY = 360;
   // 影
@@ -3263,6 +4733,7 @@ function drawWeaponSelect(dt) {
     if (b.weapon === 'sword') drawSword(ctx, cx, cy + 25, 40);
     if (b.weapon === 'shield') drawShield(ctx, cx, cy, 30);
     if (b.weapon === 'hammer') drawHammer(ctx, cx, cy + 25, 40);
+    if (b.weapon === 'bow') { ctx.save(); ctx.translate(cx, cy + 5); ctx.rotate(-Math.PI / 2); drawBow(ctx, 0, 0, 26, true); ctx.restore(); }
     ctx.fillStyle = '#222';
     ctx.font = 'bold 18px sans-serif';
     ctx.textAlign = 'center';
@@ -3274,6 +4745,7 @@ function drawWeaponSelect(dt) {
       sword: '剣: 近距離 (3) / 2秒長押しで斬撃 (4)',
       shield: '盾: 構えて反射 (2) / 長押し投げ (5)',
       hammer: 'ハンマー: 範囲攻撃 (5、1秒溜め) / 長押しで回転攻撃 (1連続)',
+      bow: '弓: 矢を射る (3) / 長押しで自動ねらい撃ち (5)',
     }[selectedWeapon];
     ctx.fillStyle = '#333';
     ctx.font = '16px sans-serif';
@@ -3348,6 +4820,22 @@ function drawArena() {
   ctx.stroke();
 }
 
+// 現在のステージのボス表示名（ゲーム1・2共通）
+const BOSS_NAMES = {
+  sword: '剣のボス', bow: '弓のボス', hammer: 'ハンマーのボス', bomb: 'ラスボス', saw: 'ノコギリのボス',
+  sword2: '剣のボス', bow2: '弓のボス', hammer2: 'ハンマーのボス', bomb2: '爆弾のボス',
+  spike: 'ラスボス', composite: 'なぞのボス',
+};
+function bossDisplayName() { return BOSS_NAMES[stages[stageIndex]] || 'ボス'; }
+function isHiddenStage() {
+  const t = stages[stageIndex];
+  return t === 'saw' || t === 'composite';
+}
+function mainStageCount() { return currentGame === 2 ? GAME2_STAGES.length : GAME1_STAGES.length; }
+function stageLabelText() {
+  return isHiddenStage() ? '隠しステージ' : `STAGE ${stageIndex + 1} / ${mainStageCount()}`;
+}
+
 function drawHUD() {
   // ボスHPバー
   if (boss) {
@@ -3366,11 +4854,7 @@ function drawHUD() {
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 14px sans-serif';
     ctx.textAlign = 'center';
-    const isHidden = stages[stageIndex] === 'saw';
-    const bossName = isHidden ? 'ノコギリのボス'
-      : ['剣のボス', '弓のボス', 'ハンマーのボス', 'ラスボス'][stageIndex];
-    const stageLabel = isHidden ? '隠しステージ' : `STAGE ${stageIndex + 1} / 4`;
-    ctx.fillText(`${stageLabel}   ${bossName}`, W / 2, by + bh + 16);
+    ctx.fillText(`${stageLabelText()}   ${bossDisplayName()}`, W / 2, by + bh + 16);
   }
   // 武器アイコン
   ctx.save();
@@ -3380,6 +4864,7 @@ function drawHUD() {
   if (player.weapon === 'sword') drawSword(ctx, 0, 12, 22);
   if (player.weapon === 'shield') drawShield(ctx, 0, -4, 16);
   if (player.weapon === 'hammer') drawHammer(ctx, 0, 16, 22);
+  if (player.weapon === 'bow') { ctx.save(); ctx.rotate(-Math.PI / 2); drawBow(ctx, 0, 0, 18, true); ctx.restore(); }
   if (upgrades[player.weapon]) {
     ctx.fillStyle = '#ffd040';
     ctx.strokeStyle = '#1a1a1a';
@@ -3447,6 +4932,9 @@ function drawHUD() {
   if (player.weapon === 'hammer' && player.hammerWindup > 0) {
     drawChargeBar(1 - player.hammerWindup, false, '#ff8040');
   }
+  if (player.weapon === 'bow' && player.bowAiming) {
+    drawChargeBar(1, true, '#7ec0ff');
+  }
 }
 
 function drawChargeBar(ratio, full, color = '#7ec0ff') {
@@ -3493,6 +4981,7 @@ function drawPlayer() {
     swordSpinAngle: player.swordSpinAngle,
     hammerSwing: player.hammerSwing > 0 ? -0.6 : 0,
     swordSlashing: player.swordSlash > 0,
+    bowAiming: player.bowAiming,
   });
 
   // 剣の斬りつけエフェクト
@@ -3611,8 +5100,8 @@ function drawEffects() {
 function startGame() {
   stageIndex = 0;
   coins = 0;
-  upgrades = { sword: false, shield: false, hammer: false };
-  stages = ['sword', 'bow', 'hammer', 'bomb'];
+  upgrades = { sword: false, shield: false, hammer: false, bow: false };
+  stages = defaultStages();
   noHitRun = true;
   inventory = { poison: 0, potion: 0, bigPotion: 0, weaponSwap: 0 };
   selectedItem = 'poison';
@@ -3658,8 +5147,9 @@ function applyItem(id) {
     }
   } else if (id === 'weaponSwap') {
     if (player && player.alive) {
-      const others = ['sword', 'shield', 'hammer'].filter(w => w !== player.weapon);
+      const others = availableWeapons().filter(w => w !== player.weapon);
       player.weapon = others[Math.floor(Math.random() * others.length)];
+      player.bowAiming = false;
       // 武器系の一時状態を初期化（投擲中の盾などが残らないように）
       player.swordCharge = 0;
       player.swordSlash = 0;
@@ -3688,6 +5178,12 @@ function startStage(idx) {
   else if (type === 'hammer') boss = new HammerBoss();
   else if (type === 'bomb') boss = new BombBoss();
   else if (type === 'saw') boss = new SawBoss();
+  else if (type === 'sword2') boss = new SwordBoss2();
+  else if (type === 'bow2') boss = new BowBoss2();
+  else if (type === 'hammer2') boss = new HammerBoss2();
+  else if (type === 'bomb2') boss = new BombBoss2();
+  else if (type === 'spike') boss = new SpikeBoss();
+  else if (type === 'composite') boss = new CompositeBoss();
   // 各ステージはノーダメ判定をリスタート
   noHitRun = true;
   // プレイヤー位置リセット
@@ -3707,13 +5203,15 @@ function startStage(idx) {
   player.hammerSpinning = false;
   player.swordSpinning = false;
   player.spinHitCooldown = 0;
+  player.bowAiming = false;
   // 状態
   state = 'BOSS_INTRO';
   stateTimer = 1.6;
 }
 
 function resetToWeaponSelect() {
-  state = 'WEAPON_SELECT';
+  // タイトル（ゲーム選択）へ戻る。ゲーム選択は毎回表示する。
+  state = 'GAME_SELECT';
   selectedWeapon = null;
   player = null;
   boss = null;
@@ -3721,7 +5219,7 @@ function resetToWeaponSelect() {
   effects = [];
   minions = [];
   stageIndex = 0;
-  stages = ['sword', 'bow', 'hammer', 'bomb'];
+  stages = defaultStages();
   noHitRun = true;
   inventory = { poison: 0, potion: 0, bigPotion: 0, weaponSwap: 0 };
   selectedItem = 'poison';
@@ -3787,14 +5285,12 @@ function drawBossIntro() {
   const a = Math.min(1, stateTimer / 1.6);
   ctx.fillStyle = `rgba(0, 0, 0, ${0.55 * a})`;
   ctx.fillRect(0, 200, W, 200);
-  const isHidden = stages[stageIndex] === 'saw';
   ctx.fillStyle = `rgba(255, 255, 255, ${a})`;
   ctx.font = 'bold 60px serif';
   ctx.textAlign = 'center';
-  ctx.fillText(isHidden ? '隠しステージ' : `STAGE ${stageIndex + 1}`, W / 2, 270);
+  ctx.fillText(isHiddenStage() ? '隠しステージ' : `STAGE ${stageIndex + 1}`, W / 2, 270);
   ctx.font = 'bold 36px serif';
-  const names = ['剣のボス', '弓のボス', 'ハンマーのボス', 'ラスボス'];
-  ctx.fillText(isHidden ? 'ノコギリのボス' : names[stageIndex], W / 2, 330);
+  ctx.fillText(bossDisplayName(), W / 2, 330);
   ctx.font = '18px sans-serif';
   ctx.fillStyle = `rgba(255, 240, 200, ${a})`;
   ctx.fillText('まもなく開始...', W / 2, 370);
@@ -3863,8 +5359,9 @@ const UPGRADE_DESC = {
   sword: '長押しで剣が回転攻撃、放すとランダム方向へ斬撃',
   shield: '構えた盾でラスボスの爆弾を含むすべての飛び道具を反射',
   hammer: '回転中、近くの飛び道具をランダム方向へ反射',
+  bow: '放った矢が壁に2回まで反射するようになる',
 };
-const WEAPON_LABEL = { sword: '剣', shield: '盾', hammer: 'ハンマー' };
+const WEAPON_LABEL = { sword: '剣', shield: '盾', hammer: 'ハンマー', bow: '弓' };
 
 function drawShop() {
   ctx.fillStyle = '#fafafa';
@@ -3911,6 +5408,7 @@ function drawShop() {
   if (selectedWeapon === 'sword') drawSword(ctx, ix, iy + 22, 38);
   else if (selectedWeapon === 'shield') drawShield(ctx, ix, iy, 28);
   else if (selectedWeapon === 'hammer') drawHammer(ctx, ix, iy + 22, 38);
+  else if (selectedWeapon === 'bow') { ctx.save(); ctx.translate(ix, iy); ctx.rotate(-Math.PI / 2); drawBow(ctx, 0, 0, 24, true); ctx.restore(); }
   if (upgraded) {
     ctx.fillStyle = '#e0b020';
     ctx.font = 'bold 24px serif';
@@ -4065,7 +5563,8 @@ function drawVictory() {
   ctx.fillText('VICTORY!', W / 2, H / 2 - 30);
   ctx.fillStyle = '#333';
   ctx.font = '24px sans-serif';
-  const bossCount = stages.includes('saw') ? 5 : 4;
+  const secret = currentGame === 2 ? 'composite' : 'saw';
+  const bossCount = mainStageCount() + (stages.includes(secret) ? 1 : 0);
   ctx.fillText(`${bossCount}体のボスを倒した！`, W / 2, H / 2 + 10);
   ctx.font = '18px sans-serif';
   ctx.fillText('Enterキー または クリックで タイトルへ', W / 2, H / 2 + 50);
@@ -4078,7 +5577,9 @@ function loop(now) {
   const dt = Math.min(0.033, (now - lastTime) / 1000 || 0);
   lastTime = now;
 
-  if (state === 'WEAPON_SELECT') {
+  if (state === 'GAME_SELECT') {
+    drawGameSelect(dt);
+  } else if (state === 'WEAPON_SELECT') {
     drawWeaponSelect(dt);
   } else if (state === 'BOSS_INTRO') {
     stateTimer -= dt;
@@ -4093,15 +5594,19 @@ function loop(now) {
     stateTimer -= dt;
     if (stateTimer <= 0) {
       const curType = stages[stageIndex];
-      if (curType === 'bomb') {
-        // ラスボスをノーダメで倒すと隠しの「ノコギリのボス」へ
-        if (noHitRun && !stages.includes('saw')) {
-          stages.push('saw');
+      const lastMain = currentGame === 2 ? 'spike' : 'bomb';
+      const secret = currentGame === 2 ? 'composite' : 'saw';
+      if (curType === lastMain) {
+        // ゲーム1のラスボス撃破でゲーム2が解禁（クリアフラグ保存）
+        if (currentGame === 1) saveGame1Cleared();
+        // ラスボスをノーダメで倒すと隠しボスが出現
+        if (noHitRun && !stages.includes(secret)) {
+          stages.push(secret);
           startStage(stageIndex + 1);
         } else {
           state = 'VICTORY';
         }
-      } else if (curType === 'saw') {
+      } else if (curType === secret) {
         state = 'VICTORY';
       } else {
         state = 'SHOP';

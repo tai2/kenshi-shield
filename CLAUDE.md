@@ -14,7 +14,7 @@ open index.html
 
 - `index.html` — Canvas要素と `game.js` の読み込みのみ
 - `style.css` — ページ周りの簡単なスタイル
-- `game.js` — ゲーム本体（一枚岩、~1700行）
+- `game.js` — ゲーム本体（一枚岩、~4500行。ゲーム1＋ゲーム2）
 
 ## 全体アーキテクチャ
 
@@ -24,8 +24,8 @@ open index.html
 2. **グローバル状態** (`state`, `player`, `boss`, `projectiles`, `effects`, 入力 `keys/spaceDown`)
 3. **入力ハンドラ** — キーは `e.code` (ArrowUp/Down/Left/Right, Space, Enter)
 4. **Player クラス** — 残機3、武器ごとの状態を内包
-5. **飛び道具クラス** — `SwordSlash`, `ShieldThrown`, `Arrow`, `BossSlash`, `BigArrow`
-6. **Boss 基底 + 各ボス** — `SwordBoss`, `BowBoss`, `HammerBoss`
+5. **飛び道具クラス** — `SwordSlash`, `ShieldThrown`, `Arrow`(壁反射対応), `BossSlash`, `BigArrow`, `BombProjectile`, `Beam`, `PlayerArrow`(弓), `Shockwave`, `Spike`
+6. **Boss 基底 + 各ボス** — ゲーム1: `SwordBoss`, `BowBoss`, `HammerBoss`, `BombBoss`, `SawBoss`(隠し)。ゲーム2: `SwordBoss2`, `BowBoss2`, `HammerBoss2`, `BombBoss2`, `SpikeBoss`(ラスボス), `CompositeBoss`(隠し)
 7. **描画ヘルパー** — `drawHero`, `drawShield`, `drawSword`, `drawHammer`, `drawZigzagMouth`, `drawHeart`, `roundRect`
 8. **画面描画** — `drawWeaponSelect`, `drawArena`, `drawHUD`, `drawPlayer`, `drawEffects`, `drawBossIntro/GameOver/Victory`
 9. **メインループ** — `loop(now)` が `state` を見て `update*` と `draw*` を呼ぶ
@@ -33,13 +33,21 @@ open index.html
 ### ステートマシン
 
 `state` のとる値:
-- `WEAPON_SELECT` — タイトル＆武器選択
+- `GAME_SELECT` — タイトル。ゲーム1 / ゲーム2 を選ぶ（**初期state**）
+- `WEAPON_SELECT` — 武器選択（左上「← もどる」で `GAME_SELECT` へ）
 - `BOSS_INTRO` — `STAGE N` 表示 (`stateTimer=1.6s`)
 - `BATTLE` — 戦闘中
 - `BOSS_DEAD` — ボス撃破演出 (`stateTimer=2.0s`)
-- `GAME_OVER` / `VICTORY` — Enter/クリックで `resetToWeaponSelect()`
+- `GAME_OVER` / `VICTORY` — Enter/クリックで `resetToWeaponSelect()`（→ `GAME_SELECT`）
 
 `startStage(idx)` は **プレイヤーの残機を維持**したまま位置と alive をリセット。残機は `resetToWeaponSelect → 新 Player` で3に戻る。
+
+### ゲーム選択（章: 剣士シールド1 / 2）
+
+- `currentGame` (1 or 2) が現在の章。`GAME1_STAGES = ['sword','bow','hammer','bomb']` / `GAME2_STAGES = ['sword2','bow2','hammer2','bomb2','spike']`。`defaultStages()` が章に応じて返す。
+- **ゲーム2はゲーム1クリアで解禁**。クリアフラグは `localStorage['kenshiShield.game1Cleared']`（`saveGame1Cleared()` で保存、起動時に読み込み）。ゲーム1のラスボス(`bomb`)撃破時に保存。
+- `GAME_SELECT` 画面はタイトル後に毎回表示。未解禁のゲーム2は鍵マーク付きで選べない (`gameSelectButtons()` の `locked`)。
+- ボス名/ステージ数/勝利演出は `bossDisplayName()` / `isHiddenStage()` / `mainStageCount()` / `stageLabelText()` で章に依存して切り替え（`BOSS_NAMES` 表を参照）。
 
 ## プレイヤー仕様
 
@@ -54,8 +62,11 @@ open index.html
 | 剣 | 近距離斬り 3dmg (range 46) | 2秒チャージで `SwordSlash` 飛ぶ斬撃 4dmg |
 | 盾 | 押している間 `blocking=true` で矢を反射 2dmg | 0.7秒以上で離すと `ShieldThrown` 投擲 5dmg |
 | ハンマー | 1秒チャージ後 AOE 5dmg (range 75) | 0.4秒以上で回転モード（移動可、連続2dmg/0.3s） |
+| 弓（**ゲーム2限定**） | `PlayerArrow` 射出 3dmg | 0.12秒以上で `bowAiming`（最寄り敵を自動照準）→ 離すと 5dmg |
 
-長押し判定は `spaceHeldDuration` をフレーム毎にカウント、`onSpaceRelease(heldFor)` で分岐。
+- 武器一覧は `availableWeapons()`（ゲーム2のみ弓を含む）。`weaponButtons()` がこれを元にボタンを動的生成。
+- 弓の強化(`upgrades.bow`, 4円)は `PlayerArrow` が壁で**2回反射**する（`maxBounces`）。
+- 長押し判定は `spaceHeldDuration` をフレーム毎にカウント、`onSpaceRelease(heldFor)` で分岐。
 
 ## ボス仕様
 
@@ -86,6 +97,24 @@ open index.html
 - **`telegraphSlam` 1.2秒** → `slamJump` 0.9秒 で `slamStart→slamTarget` を放物線移動 (`jumpHeight = sin(t*π)*80`) → 着地AOE (range 75) → `slamRecover` 2秒
 - 着地点には十字マーカーが先に表示される
 
+## 剣士シールド2 のボス（`currentGame === 2`）
+
+ゲーム1のボスとは別クラス。クラス名末尾 `2` または専用名。HP は基底の100（`spike`/`composite` のみ `maxHp=150`）。各ボスは絵 (`kenshi_shield_2_*.jpg`) を反映。
+
+| ステージ | type | クラス | HP | 攻撃パターン |
+|---|---|---|---|---|
+| 1 | `sword2` | `SwordBoss2` | 100 | ビーム(`Beam`) / 斬撃(`BossSlash`) / 突撃(壁反射→`cooldown`5秒) |
+| 2 | `bow2` | `BowBoss2` | 100 | 3連射(`Arrow` 壁1反射) / ロックオン射撃(`Arrow` 壁2反射→`cooldown`5秒)。逃走移動あり |
+| 3 | `hammer2` | `HammerBoss2` | 100 | ロックオン叩きつけ / 追跡`rage`10秒(→cd5秒, `isAttacking`) / 波動(`Shockwave`リング) |
+| 4 | `bomb2` | `BombBoss2` | 100 | 自爆AOE r=110(→cd10秒) / ロックオン`Beam` / ボム3連投(`BombProjectile`) |
+| 5(ラスボス) | `spike` | `SpikeBoss` | 150 | 突撃 / 円周3周(→cd10秒) / トゲ扇状(`Spike`) / 追跡10秒(→cd10秒) |
+| 6(隠し) | `composite` | `CompositeBoss` | 150 | **6パーツ合体で登場**(`drawCompositeIntro`)。第二形態あり |
+
+- **隠しボス出現条件**: ラスボス(`spike`)を**ノーダメ撃破**(`noHitRun`)で `composite` を `stages` に push（ゲーム1の `saw` と同じ仕組み、`loop()` の `BOSS_DEAD` 分岐）。
+- `CompositeBoss` は `takeDamage` で1度目の撃破時に第二形態へ復活（`revived`, HP150再生）。形態1: ボム3連/ビーム(cd)/矢(cd)。形態2: + 斬撃 / 突撃(cd)。`intro`/`reviving` 中は無敵。
+- 新飛び道具: `PlayerArrow`(弓), `Shockwave`(波動リング, 通過で1ダメ), `Spike`(トゲ, 盾反射可)。`Arrow` は `maxBounces` 引数で壁反射対応。
+- ボス体の描画ヘルパー: `drawSwordBoss2Body` / `drawHammerBoss2Body`(角付き) / `drawBombBoss2Body`(四分割+渦巻き目) / `drawSpikeBall`(トゲ玉+中央目) / `drawCompositeBody`(全要素のせ集め)。
+
 ## 接触ダメージのルール
 
 **「攻撃中のみ接触ダメージが発生する」が原則**。各ボスの contact 判定は対象モードのブロック内に書き、`this.mode === 'X' && ...` で同フレーム内のモード遷移を明示的にガード済み。新パターン追加時もこの形を踏襲すること。
@@ -111,7 +140,7 @@ open index.html
 |------|------|
 | プレイヤー残機 | `Player.constructor` の `this.lives = 3` |
 | プレイヤー無敵時間 | `Player.constructor` の `this.invuln = 1.2`（初期）, `hit()` 内 `this.invuln = 2.0`（被弾後） |
-| ボスHP | `BOSS_MAX_HP = 100`（全ボス共通） |
+| ボスHP | `BOSS_MAX_HP = 100`（基本）。`SpikeBoss`/`CompositeBoss` は `constructor` で `maxHp = 150` |
 | 武器ダメージ | `Player.onSpaceRelease` / `checkSwordHit` / `executeHammerAOE` 等の各箇所のリテラル |
 | ボスの攻撃間隔 | 各 `update` の `this.modeTimer = N` |
 | プレイヤー速度 | `PLAYER_SPEED = 3.2` |

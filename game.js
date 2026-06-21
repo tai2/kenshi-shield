@@ -1059,14 +1059,10 @@ class BombProjectile {
     // 反射可能か（ラスボスの爆弾は false。トゲ付きで見た目も変わる）
     this.reflectable = reflectable;
   }
-  // 任意方向への反射本体。reflectable フラグは無視（強制反射）。
-  reflectAt(angle) {
-    const dist = 240;
+  // 指定地点へ落ちるように反射（アリーナ内にクランプ）。reflectable は無視。
+  reflectTo(tx, ty) {
     this.startX = this.x;
     this.startY = this.y;
-    let tx = this.x + Math.cos(angle) * dist;
-    let ty = this.y + Math.sin(angle) * dist;
-    // アリーナ内に収まるようクランプ
     const cd = Math.hypot(tx - CENTER.x, ty - CENTER.y);
     if (cd > ARENA_R - 20) {
       const k = (ARENA_R - 20) / cd;
@@ -1080,6 +1076,11 @@ class BombProjectile {
     this.owner = 'player';
     this.reflected = true;
   }
+  // 任意方向への反射本体（一定距離先へ）。
+  reflectAt(angle) {
+    const dist = 240;
+    this.reflectTo(this.x + Math.cos(angle) * dist, this.y + Math.sin(angle) * dist);
+  }
   reflect() {
     // 通常の反射経路（ハンマー強化など）は reflectable をチェック。
     if (!this.reflectable) return;
@@ -1088,17 +1089,17 @@ class BombProjectile {
   update(dt) {
     this.timer += dt;
     this.fuseSpark += dt * 14;
-    // 強化盾のブロック: 反射不可フラグも無視し、構えた向きへ跳ね返す。
+    // 強化盾のブロック: 反射不可フラグも無視。構えていれば向きに関わらず、
+    // 近づいた爆弾を最寄りの敵（＝ボス）へ跳ね返す。
     if (this.owner === 'boss' && upgrades.shield && player.alive && player.blocking) {
       const dx = this.x - player.x, dy = this.y - player.y;
       const d = Math.hypot(dx, dy);
-      if (d < player.r + 26) {
-        const dot = (dx * player.facing.x + dy * player.facing.y) / Math.max(d, 0.0001);
-        if (dot > 0.2) {
-          this.reflectAt(Math.atan2(player.facing.y, player.facing.x));
-          effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
-          return;
-        }
+      if (d < player.r + 32) {
+        const e = player.nearestEnemy();
+        if (e) this.reflectTo(e.x, e.y);
+        else this.reflectAt(Math.atan2(player.facing.y, player.facing.x));
+        effects.push({ type: 'spark', x: this.x, y: this.y, life: 0.3 });
+        return;
       }
     }
     const t = this.timer / this.flightTime;

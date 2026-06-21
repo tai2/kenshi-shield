@@ -114,7 +114,7 @@ open index.html
 - ラスボス戦中は HUD に**「ノーダメ」バッジ**を表示（`isLastMainBossStage() && noHitRun`）。被弾すると即消えるので隠しボスの条件が見える。
 - `CompositeBoss` は `takeDamage` で1度目の撃破時に第二形態へ復活（`revived`, HP150再生）。形態1: ボム3連/ビーム(cd)/矢(cd)。形態2: + 斬撃 / 突撃(cd)。`intro`/`reviving` 中は無敵。
 - 新飛び道具: `PlayerArrow`(弓), `Shockwave`(波動リング, 通過で1ダメ), `Spike`(トゲ, 盾反射可)。`Arrow` は `maxBounces` 引数で壁反射対応。
-- ボス体の描画ヘルパー: `drawSwordBoss2Body` / `drawHammerBoss2Body`(角付き) / `drawBombBoss2Body`(四分割+渦巻き目) / `drawSpikeBall`(トゲ玉+中央目) / `drawCompositeBody`(全要素のせ集め)。
+- ボス体の描画ヘルパー: `drawSwordBoss2Body`(上に丸い頭＋顔・細長い八角形の刃・下に鍔・台座。ゲーム1の剣ボスとは別の輪郭) / `drawBowBoss2Body`(D字型の弓＋貫通する長い矢・中央に丸い目。ゲーム1の三日月弓とは別の輪郭) / `drawHammerBoss2Body`(角付き) / `drawBombBoss2Body`(四分割+渦巻き目) / `drawSpikeBall`(トゲ玉+中央目) / `drawCompositeBody`(全要素のせ集め)。
 
 ## 接触ダメージのルール
 

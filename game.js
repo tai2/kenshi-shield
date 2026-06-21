@@ -3335,26 +3335,7 @@ class BowBoss2 extends Boss {
       ctx.save();
       if (this.mode === 'cooldown') ctx.globalAlpha = 0.6;
       ctx.rotate(this.aimAngle);
-      // 弓
-      ctx.strokeStyle = '#5a4630'; ctx.lineWidth = 6; ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.arc(-16, 0, 27, -Math.PI * 0.55, Math.PI * 0.55); ctx.stroke();
-      ctx.lineCap = 'butt';
-      // 弦
-      const sx = -16 + Math.cos(-Math.PI * 0.55) * 27, sy = Math.sin(-Math.PI * 0.55) * 27;
-      const pull = (this.mode === 'aiming' || this.mode === 'charging') ? -12 : -20;
-      ctx.strokeStyle = '#fdf5e1'; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(pull, 0); ctx.lineTo(sx, -sy); ctx.stroke();
-      // 矢
-      ctx.strokeStyle = '#5a4630'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(-30, 0); ctx.lineTo(18, 0); ctx.stroke();
-      ctx.fillStyle = '#d4d4dc'; ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(18, -11); ctx.lineTo(36, 0); ctx.lineTo(18, 11); ctx.closePath();
-      ctx.fill(); ctx.stroke();
-      // 矢じりの顔
-      ctx.fillStyle = '#1a1a1a';
-      ctx.fillRect(21, -5, 2.5, 3.5); ctx.fillRect(26, -5, 2.5, 3.5);
-      ctx.lineWidth = 1.2;
-      drawZigzagMouth(ctx, 21, 2, 9, 3, 3);
+      drawBowBoss2Body(ctx, this.mode === 'aiming' || this.mode === 'charging');
       ctx.restore();
       // 照準線
       if (this.mode === 'aiming' || this.mode === 'shooting' || this.mode === 'charging') {
@@ -4171,39 +4152,111 @@ function drawSawHand(ctx, x, y, side, telegraph) {
 }
 
 // ---- ゲーム2: ボスの体パーツ描画 -------------------------------------
+// 剣士シールド2の剣ボス: 上に大きな丸い頭、細長い八角形の刃、下のほうに
+// ジグザグ付きの鍔、柄、平らな台座。ゲーム1（刃に顔・小さい柄頭）とは別物の輪郭。
 function drawSwordBoss2Body(ctx, bladeColor) {
   ctx.strokeStyle = '#1a1a1a';
   ctx.lineWidth = 2.5;
-  const bladeLen = 58, bladeW = 30;
-  // 丸い頭（刃の先）
-  ctx.fillStyle = '#6a6a74';
-  ctx.beginPath();
-  ctx.arc(0, -bladeLen - 6, 9, 0, Math.PI * 2);
-  ctx.fill(); ctx.stroke();
-  // 刃
-  ctx.fillStyle = bladeColor;
-  ctx.beginPath();
-  ctx.moveTo(-bladeW / 2, 18);
-  ctx.lineTo(bladeW / 2, 18);
-  ctx.lineTo(bladeW / 2, -bladeLen + 10);
-  ctx.lineTo(0, -bladeLen);
-  ctx.lineTo(-bladeW / 2, -bladeLen + 10);
-  ctx.closePath();
-  ctx.fill(); ctx.stroke();
-  // 鍔
-  ctx.fillStyle = '#3a2818';
-  ctx.fillRect(-26, 18, 52, 8); ctx.strokeRect(-26, 18, 52, 8);
-  // ジグザグ
-  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2;
-  drawZigzagMouth(ctx, -22, 9, 44, 8, 5);
+
+  // 台座（足）
+  ctx.fillStyle = '#6a4a28';
+  ctx.fillRect(-17, 48, 34, 7); ctx.strokeRect(-17, 48, 34, 7);
   // 柄
   ctx.fillStyle = '#7a4f20';
-  ctx.fillRect(-5, 26, 10, 14); ctx.strokeRect(-5, 26, 10, 14);
-  ctx.fillStyle = '#d4a040';
-  ctx.beginPath(); ctx.arc(0, 42, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  // 顔（刃の上）
+  ctx.fillRect(-5, 30, 10, 19); ctx.strokeRect(-5, 30, 10, 19);
+
+  // 刃（細長い八角形）
+  ctx.fillStyle = bladeColor;
+  const bw = 17, top = -38, bot = 23;
+  ctx.beginPath();
+  ctx.moveTo(-bw, bot - 6);
+  ctx.lineTo(-bw, top + 10);
+  ctx.lineTo(-bw + 7, top);
+  ctx.lineTo(bw - 7, top);
+  ctx.lineTo(bw, top + 10);
+  ctx.lineTo(bw, bot - 6);
+  ctx.lineTo(bw - 6, bot);
+  ctx.lineTo(-bw + 6, bot);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // 中央の溝
+  ctx.strokeStyle = '#9aa0ad'; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.moveTo(0, top + 6); ctx.lineTo(0, bot - 6); ctx.stroke();
+
+  // 鍔（横長・ジグザグ付き、下のほう）
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2.5;
+  ctx.fillStyle = '#cfcfd8';
+  ctx.fillRect(-30, 22, 60, 10); ctx.strokeRect(-30, 22, 60, 10);
+  ctx.lineWidth = 1.8;
+  drawZigzagMouth(ctx, -26, 25, 52, 9, 5);
+
+  // 首（頭と刃をつなぐ肩線）
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(-10, top); ctx.lineTo(-7, -46);
+  ctx.moveTo(10, top); ctx.lineTo(7, -46);
+  ctx.stroke();
+
+  // 大きな丸い頭（球）— このボス最大の特徴
+  const hy = -58, hr = 14;
+  ctx.fillStyle = '#5a5a66';
+  ctx.beginPath(); ctx.arc(0, hy, hr, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.22)';
+  ctx.beginPath(); ctx.arc(-hr * 0.35, hy - hr * 0.35, hr * 0.42, 0, Math.PI * 2); ctx.fill();
+  // 顔: 四角い目＋ジグザグ口（顔は刃ではなく頭に）
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1.6;
+  for (const sx of [-5.5, 5.5]) { ctx.beginPath(); ctx.rect(sx - 3, hy - 5, 6, 6); ctx.fill(); ctx.stroke(); }
   ctx.fillStyle = '#1a1a1a';
-  ctx.fillRect(-8, -28, 5, 7); ctx.fillRect(3, -28, 5, 7);
+  ctx.beginPath(); ctx.arc(-5.5, hy - 1.5, 1.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(5.5, hy - 1.5, 1.5, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1.6;
+  drawZigzagMouth(ctx, -7, hy + 5, 14, 4, 3);
+}
+
+// 剣士シールド2の弓ボス: D字型の弓（前方へ膨らむ三日月リム＋背筋）に、
+// 長い矢が水平に貫通。後ろに羽、前にブロック＋三角の矢じり、中央に丸い目。
+// ゲーム1（三日月弓・矢じりに顔）とは別物の輪郭。矢は +x（照準方向）。
+function drawBowBoss2Body(ctx, aiming) {
+  // 弓のリム（右へ膨らむD字の三日月）
+  ctx.fillStyle = '#caa15e'; ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(-8, 0, 33, -Math.PI / 2, Math.PI / 2, false);
+  ctx.arc(-8, 0, 25, Math.PI / 2, -Math.PI / 2, true);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // 背（リザー/グリップ）
+  ctx.fillStyle = '#7a4f20';
+  ctx.fillRect(-11, -33, 6, 66); ctx.strokeRect(-11, -33, 6, 66);
+  // 弦（中央のノック点へ。構え中は前へ引かれる）
+  ctx.strokeStyle = '#fdf5e1'; ctx.lineWidth = 1.6;
+  const nock = aiming ? 4 : -6;
+  ctx.beginPath(); ctx.moveTo(-8, -33); ctx.lineTo(nock, 0); ctx.lineTo(-8, 33); ctx.stroke();
+
+  // 矢のシャフト（弓を貫通して前後に長い）
+  ctx.strokeStyle = '#6a4a2a'; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-46, 0); ctx.lineTo(46, 0); ctx.stroke();
+  ctx.lineCap = 'butt';
+  // 後ろの羽（フレッチング）
+  ctx.fillStyle = '#e8ddc4'; ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(-46, -8); ctx.lineTo(-33, -3); ctx.lineTo(-33, 3); ctx.lineTo(-46, 8);
+  ctx.lineTo(-41, 0); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // 前の矢じり（四角いブロック＋三角の先端）
+  ctx.fillStyle = '#cfcfd8'; ctx.lineWidth = 2;
+  ctx.fillRect(30, -6, 8, 12); ctx.strokeRect(30, -6, 8, 12);
+  ctx.beginPath(); ctx.moveTo(38, -8); ctx.lineTo(52, 0); ctx.lineTo(38, 8); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+
+  // 顔: 中央の丸い目（矢はその後ろを通る）＋小さなジグザグ口
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(-3, 0, 6.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#1a1a1a';
+  ctx.beginPath(); ctx.arc(-2, 0, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-3.5, -1.5, 1.2, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1.4;
+  drawZigzagMouth(ctx, -9, 11, 12, 4, 3);
 }
 
 function drawHammerBoss2Body(ctx, headColor) {

@@ -3122,6 +3122,7 @@ class SwordBoss2 extends Boss {
   constructor() {
     super(CENTER.x, CENTER.y - 100);
     this.r = 26;
+    this.maxHp = 150; this.hp = 150;
     this.mode = 'idle';
     this.modeTimer = 1.8;
     this.bounces = 0;
@@ -3244,6 +3245,7 @@ class BowBoss2 extends Boss {
   constructor() {
     super(CENTER.x, CENTER.y - 100);
     this.r = 28;
+    this.maxHp = 150; this.hp = 150;
     this.mode = 'idle';
     this.modeTimer = 1.8;
     this.shotsLeft = 0;
@@ -3356,6 +3358,7 @@ class HammerBoss2 extends Boss {
   constructor() {
     super(CENTER.x, CENTER.y - 100);
     this.r = 32;
+    this.maxHp = 150; this.hp = 150;
     this.mode = 'idle';
     this.modeTimer = 2.0;
     this.angle = 0;
@@ -3495,6 +3498,7 @@ class BombBoss2 extends Boss {
   constructor() {
     super(CENTER.x, CENTER.y - 100);
     this.r = 30;
+    this.maxHp = 150; this.hp = 150;
     this.mode = 'idle';
     this.modeTimer = 2.2;
     this.angle = 0;

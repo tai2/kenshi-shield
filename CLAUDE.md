@@ -99,14 +99,14 @@ open index.html
 
 ## 剣士シールド2 のボス（`currentGame === 2`）
 
-ゲーム1のボスとは別クラス。クラス名末尾 `2` または専用名。HP は基底の100（`spike`/`composite` のみ `maxHp=150`）。各ボスは絵 (`kenshi_shield_2_*.jpg`) を反映。
+ゲーム1のボスとは別クラス。クラス名末尾 `2` または専用名。**全ボス HP=150**（各 `constructor` で `maxHp=150; hp=150`）。各ボスは絵 (`kenshi_shield_2_*.jpg`) を反映。
 
 | ステージ | type | クラス | HP | 攻撃パターン |
 |---|---|---|---|---|
-| 1 | `sword2` | `SwordBoss2` | 100 | ビーム(`Beam`) / 斬撃(`BossSlash`) / 突撃(壁反射→`cooldown`5秒) |
-| 2 | `bow2` | `BowBoss2` | 100 | 3連射(`Arrow` 壁1反射) / ロックオン射撃(`Arrow` 壁2反射→`cooldown`5秒)。逃走移動あり |
-| 3 | `hammer2` | `HammerBoss2` | 100 | ロックオン叩きつけ / 追跡`rage`10秒(→cd5秒, `isAttacking`) / 波動(`Shockwave`リング) |
-| 4 | `bomb2` | `BombBoss2` | 100 | 自爆AOE r=110(→cd10秒) / ロックオン`Beam` / ボム3連投(`BombProjectile`) |
+| 1 | `sword2` | `SwordBoss2` | 150 | ビーム(`Beam`) / 斬撃(`BossSlash`) / 突撃(壁反射→`cooldown`5秒) |
+| 2 | `bow2` | `BowBoss2` | 150 | 3連射(`Arrow` 壁1反射) / ロックオン射撃(`Arrow` 壁2反射→`cooldown`5秒)。逃走移動あり |
+| 3 | `hammer2` | `HammerBoss2` | 150 | ロックオン叩きつけ / 追跡`rage`10秒(→cd5秒, `isAttacking`) / 波動(`Shockwave`リング) |
+| 4 | `bomb2` | `BombBoss2` | 150 | 自爆AOE r=110(→cd10秒) / ロックオン`Beam` / ボム3連投(`BombProjectile`) |
 | 5(ラスボス) | `spike` | `SpikeBoss` | 150 | 突撃 / 円周3周(→cd10秒) / トゲ扇状(`Spike`) / 追跡10秒(→cd10秒) |
 | 6(隠し) | `composite` | `CompositeBoss` | 150 | **6パーツ合体で登場**(`drawCompositeIntro`)。第二形態あり |
 
@@ -143,7 +143,7 @@ open index.html
 |------|------|
 | プレイヤー残機 | `Player.constructor` の `this.lives = 3` |
 | プレイヤー無敵時間 | `Player.constructor` の `this.invuln = 1.2`（初期）, `hit()` 内 `this.invuln = 2.0`（被弾後） |
-| ボスHP | `BOSS_MAX_HP = 100`（基本）。`SpikeBoss`/`CompositeBoss` は `constructor` で `maxHp = 150` |
+| ボスHP | `BOSS_MAX_HP = 100`（ゲーム1の基本）。ゲーム2は全ボス `constructor` で `maxHp = 150; hp = 150` |
 | 武器ダメージ | `Player.onSpaceRelease` / `checkSwordHit` / `executeHammerAOE` 等の各箇所のリテラル |
 | ボスの攻撃間隔 | 各 `update` の `this.modeTimer = N` |
 | プレイヤー速度 | `PLAYER_SPEED = 3.2` |

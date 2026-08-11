@@ -14,7 +14,7 @@ open index.html
 
 - `index.html` — Canvas要素と `game.js` の読み込みのみ
 - `style.css` — ページ周りの簡単なスタイル
-- `game.js` — ゲーム本体（一枚岩、~4500行。ゲーム1＋ゲーム2）
+- `game.js` — ゲーム本体（一枚岩、~6900行。ゲーム1＋ゲーム2＋ゲーム3）
 
 ## 全体アーキテクチャ
 
@@ -24,8 +24,8 @@ open index.html
 2. **グローバル状態** (`state`, `player`, `boss`, `projectiles`, `effects`, 入力 `keys/spaceDown`)
 3. **入力ハンドラ** — キーは `e.code` (ArrowUp/Down/Left/Right, Space, Enter)
 4. **Player クラス** — 残機3、武器ごとの状態を内包
-5. **飛び道具クラス** — `SwordSlash`, `ShieldThrown`, `Arrow`(壁反射対応), `BossSlash`, `BigArrow`, `BombProjectile`, `Beam`, `PlayerArrow`(弓), `Shockwave`, `Spike`
-6. **Boss 基底 + 各ボス** — ゲーム1: `SwordBoss`, `BowBoss`, `HammerBoss`, `BombBoss`, `SawBoss`(隠し)。ゲーム2: `SwordBoss2`, `BowBoss2`, `HammerBoss2`, `BombBoss2`, `SpikeBoss`(ラスボス), `CompositeBoss`(隠し)
+5. **飛び道具クラス** — `SwordSlash`, `ShieldThrown`, `Arrow`(壁反射対応), `BossSlash`, `BigArrow`(`blockable`引数), `BombProjectile`(`reflectable`/`shieldBlockable`引数), `Beam`(`blockable`引数), `PlayerArrow`(弓), `Shockwave`, `Spike`, `SpearWave`(ゲーム3)
+6. **Boss 基底 + 各ボス** — ゲーム1: `SwordBoss`, `BowBoss`, `HammerBoss`, `BombBoss`, `SawBoss`(隠し)。ゲーム2: `SwordBoss2`, `BowBoss2`, `HammerBoss2`, `BombBoss2`, `SpikeBoss`(ラスボス), `CompositeBoss`(隠し)。ゲーム3: `SwordBoss3`, `BowBoss3`, `HammerBoss3`, `BombBoss3`, `SawBoss3`, `SpearBoss3`(ラスボス), `TruckBoss3`(隠し)
 7. **描画ヘルパー** — `drawHero`, `drawShield`, `drawSword`, `drawHammer`, `drawZigzagMouth`, `drawHeart`, `roundRect`
 8. **画面描画** — `drawWeaponSelect`, `drawArena`, `drawHUD`, `drawPlayer`, `drawEffects`, `drawBossIntro/GameOver/Victory`
 9. **メインループ** — `loop(now)` が `state` を見て `update*` と `draw*` を呼ぶ
@@ -33,7 +33,7 @@ open index.html
 ### ステートマシン
 
 `state` のとる値:
-- `GAME_SELECT` — タイトル。ゲーム1 / ゲーム2 を選ぶ（**初期state**）
+- `GAME_SELECT` — タイトル。ゲーム1 / ゲーム2 / ゲーム3 を選ぶ（**初期state**）
 - `WEAPON_SELECT` — 武器選択（左上「← もどる」で `GAME_SELECT` へ）
 - `BOSS_INTRO` — `STAGE N` 表示 (`stateTimer=1.6s`)
 - `BATTLE` — 戦闘中
@@ -42,11 +42,14 @@ open index.html
 
 `startStage(idx)` は **プレイヤーの残機を維持**したまま位置と alive をリセット。残機は `resetToWeaponSelect → 新 Player` で3に戻る。
 
-### ゲーム選択（章: 剣士シールド1 / 2）
+### ゲーム選択（章: 剣士シールド1 / 2 / 3）
 
-- `currentGame` (1 or 2) が現在の章。`GAME1_STAGES = ['sword','bow','hammer','bomb']` / `GAME2_STAGES = ['sword2','bow2','hammer2','bomb2','spike']`。`defaultStages()` が章に応じて返す。
-- **ゲーム2はゲーム1クリアで解禁**。クリアフラグは `localStorage['kenshiShield.game1Cleared']`（`saveGame1Cleared()` で保存、起動時に読み込み）。ゲーム1のラスボス(`bomb`)撃破時に保存。
-- `GAME_SELECT` 画面はタイトル後に毎回表示。未解禁のゲーム2は鍵マーク付きで選べない (`gameSelectButtons()` の `locked`)。
+- `currentGame` (1〜3) が現在の章。`GAME1_STAGES = ['sword','bow','hammer','bomb']` / `GAME2_STAGES = ['sword2','bow2','hammer2','bomb2','spike']` / `GAME3_STAGES = ['sword3','bow3','hammer3','bomb3','saw3','spear3']`。`defaultStages()` が章に応じて返す。
+- **ゲーム2はゲーム1クリア、ゲーム3はゲーム2クリアで解禁**。クリアフラグは `localStorage['kenshiShield.game1Cleared']` / `['kenshiShield.game2Cleared']`（`saveGame1Cleared()`/`saveGame2Cleared()` で保存、起動時に読み込み）。各章のラスボス(`bomb`/`spike`)撃破時に保存。
+- `GAME_SELECT` 画面はタイトル後に毎回表示。未解禁の章は鍵マーク付きで選べない (`gameSelectButtons()` の `locked`)。
+- **隠しデバッグコマンド**: 入力方法は2通り、どちらも `activateDebugUnlock()` を呼び `debugUnlockAll=true` にする。クリアフラグは書き換えず、`localStorage['kenshiShield.debugUnlockAll']` にも保存され次回起動時も有効。
+  - キーボード: ↑↑↓↓←→←→BA (コナミコマンド, `DEBUG_UNLOCK_CODE`)。`checkDebugUnlockCode()` が `keydown` ハンドラから毎回呼ばれ直近10入力をバッファして比較。
+  - タッチ/マウス（**スマホでも操作可能**）: `GAME_SELECT` 画面のタイトルロゴを`TITLE_TAP_WINDOW=1.5秒`以内に`TITLE_TAP_COUNT=7回`連続タップ/クリック。`checkTitleTap()` が `handleClick()` の先頭（`state === 'GAME_SELECT'` 時）から呼ばれる。間隔が空くとカウントがリセットされる。
 - ボス名/ステージ数/勝利演出は `bossDisplayName()` / `isHiddenStage()` / `mainStageCount()` / `stageLabelText()` で章に依存して切り替え（`BOSS_NAMES` 表を参照）。
 
 ## プレイヤー仕様
@@ -62,10 +65,12 @@ open index.html
 | 剣 | 近距離斬り 3dmg (range 46) | 2秒チャージで `SwordSlash` 飛ぶ斬撃 4dmg |
 | 盾 | 押している間 `blocking=true`。飛び道具を**全方向で無効化（完全無敵）**、正面なら反射 2dmg | 0.7秒以上で離すと `ShieldThrown` 投擲 5dmg |
 | ハンマー | 1秒チャージ後 AOE 5dmg (range 75) | 0.4秒以上で回転モード（移動可、連続2dmg/0.3s） |
-| 弓（**ゲーム2限定**） | `PlayerArrow` 射出 3dmg | 0.12秒以上で `bowAiming`（最寄り敵を自動照準）→ 離すと 5dmg |
+| 弓（**ゲーム2以降**） | `PlayerArrow` 射出 3dmg | 0.12秒以上で `bowAiming`（最寄り敵を自動照準）→ 離すと 5dmg |
+| 槍（**ゲーム3限定**） | `checkSpearHit()` でつつく 2dmg (range 56) | 2秒チャージで離すと `spearDashing` 突撃状態へ。`Player.update` が通常の移動処理をバイパスして `updateSpearDash()` を呼ぶ。矢印キー/スティックで軌道を緩やかに操作可能、接触ダメージ2dmg |
 
-- 武器一覧は `availableWeapons()`（ゲーム2のみ弓を含む）。`weaponButtons()` がこれを元にボタンを動的生成。
+- 武器一覧は `availableWeapons()`（ゲーム2で弓、ゲーム3で槍が増える）。`weaponButtons()` がこれを元にボタンを動的生成。
 - 弓の強化(`upgrades.bow`, 4円)は `PlayerArrow` が壁で**2回反射**する（`maxBounces`）。
+- 槍の強化(`upgrades.spear`, 5円)は `updateSpearDash()` 内でステアリング目標を「入力方向」から「最寄りの敵の方向」(`nearestEnemy()`)に差し替え、自動ホーミングする。
 - 長押し判定は `spaceHeldDuration` をフレーム毎にカウント、`onSpaceRelease(heldFor)` で分岐。
 
 ## ボス仕様
@@ -116,13 +121,32 @@ open index.html
 - 新飛び道具: `PlayerArrow`(弓), `Shockwave`(波動リング, 通過で1ダメ), `Spike`(トゲ, 盾反射可)。`Arrow` は `maxBounces` 引数で壁反射対応。
 - ボス体の描画ヘルパー: `drawSwordBoss2Body`(上に丸い頭＋顔・細長い八角形の刃・下に鍔・台座。ゲーム1の剣ボスとは別の輪郭) / `drawBowBoss2Body`(D字型の弓＋貫通する長い矢・中央に丸い目。ゲーム1の三日月弓とは別の輪郭) / `drawHammerBoss2Body`(角付き) / `drawBombBoss2Body`(四分割+渦巻き目) / `drawSpikeBall`(トゲ玉+中央目) / `drawCompositeBody`(全要素のせ集め)。
 
+## 剣士シールド3 のボス（`currentGame === 3`）
+
+ゲーム1・2のボスとは別クラス。クラス名末尾 `3` または専用名。HPはボスごとに個別（下表）。
+
+| ステージ | type | クラス | HP | 攻撃パターン |
+|---|---|---|---|---|
+| 1 | `sword3` | `SwordBoss3` | 100 | 斬撃(`BossSlash`, 盾可) / 突撃(壁反射3回→cd10秒) / 追跡10秒(→cd10秒)。接触は突撃・追跡中のみ |
+| 2 | `bow3` | `BowBoss3` | 100 | 3連射(`Arrow`, 盾可) / 溜め大矢(`BigArrow(blockable=false)`, 盾不可→`stunned`5秒) / 突撃(壁反射2回で停止、隙なし)。逃走移動あり |
+| 3 | `hammer3` | `HammerBoss3` | 130 | `HammerBoss2`と同じパターンを流用（ロックオン叩きつけ/追跡rage10秒→cd5秒/波動`Shockwave`）。全ガード不可 |
+| 4 | `bomb3` | `BombBoss3` | 130 | `BombBoss2`と同じパターンを流用（自爆AOE→cd10秒/ロックオン`Beam`/ボム3連投、盾可）。本体接触判定なし |
+| 5 | `saw3` | `SawBoss3` | 130 | **隙タイミングなし**。`teleportOut`→`teleportIn`→`telegraphDash`→`dashing`(壁反射2回)のループのみ。本体は登場演出中を除き常に接触ダメージ判定あり（`isAttacking()`の一般原則の意図的な例外）。全ガード不可 |
+| 6(ラスボス) | `spear3` | `SpearBoss3` | 130 | 直進突撃(壁で停止) / 壁反射突撃(2回まで) / 壁反射のたびに`SpearWave`(盾可)を飛ばす突撃。いずれも→cd10秒。接触は突撃中のみ |
+| 7(隠し) | `truck3` | `TruckBoss3` | 150 | `teleport`で移動→ボム散布(`BombProjectile(reflectable=false, shieldBlockable=false)`, 盾不可)／後方排気口から`Beam(blockable=true)`(盾可)を出しながら突進。接触は突進中のみ |
+
+- **隠しボス出現条件はゲーム1/2と異なる**: ラスボス(`spear3`)を**槍のみで撃破**すると `truck3` が出現。専用フラグ `spearOnlyRun`（`noHitRun`とは別物、**ラン全体**で1回のみリセット）を使う。`startGame()` で `currentGame===3 && selectedWeapon==='spear'` の時だけ true にセットし、以後 `updateBattle()` が毎フレーム `player.weapon !== 'spear'` なら false化（アイテム「武器変更」で槍以外になった場合も自動的に検知される）。ステージ毎にはリセットしない点が `noHitRun` と異なる。
+- ラスボス戦中は HUD に**「槍のみ撃破中」バッジ**を表示（`isLastMainBossStage() && spearOnlyRun`、ゲーム1/2の「ノーダメ」バッジと同じ場所を条件分岐で差し替え）。
+- 飛び道具の新しいガード制御引数: `BigArrow(x,y,dir,blockable=true)` / `Beam(x,y,dir,telegraphTime,activeTime,blockable=false)` / `BombProjectile(...,reflectable=true,shieldBlockable=true)`。`reflectable` はハンマー強化の汎用反射(`reflect()`)向け、`shieldBlockable` は盾強化のキャッチ＆スロー(`reflectTo`)向けで、両者は独立（`reflectable=false` でも `shieldBlockable=true` なら盾では防げる）。
+- ボス体の描画ヘルパー: `drawSwordBoss3Body`(湾曲した三日月刃、刃の付け根に顔) / `drawBowBoss3Body`(丸い半円ドーム状の本体＋中央の大きな目＋脚2本) / `drawSpearBoss3Body`(長い柄＋大きな三角の穂先、柄の中ほどに顔) / `drawTruckBoss3Body`(箱型の車体＋タイヤ2つ＋運転台の窓が顔＋背面に排気口)。ハンマー/ボム/トゲ玉は既存の `drawHammerBoss2Body`/`drawBombBoss2Body`/`drawSpikeBall` をそのまま流用（見た目が仕様と一致するため新規描画関数を作らず再利用）。
+
 ## 接触ダメージのルール
 
-**「攻撃中のみ接触ダメージが発生する」が原則**。各ボスの contact 判定は対象モードのブロック内に書き、`this.mode === 'X' && ...` で同フレーム内のモード遷移を明示的にガード済み。新パターン追加時もこの形を踏襲すること。
+**「攻撃中のみ接触ダメージが発生する」が原則**。各ボスの contact 判定は対象モードのブロック内に書き、`this.mode === 'X' && ...` で同フレーム内のモード遷移を明示的にガード済み。新パターン追加時もこの形を踏襲すること。（唯一の意図的な例外: ゲーム3の `SawBoss3` は仕様上「隙タイミングなし・常に接触ダメージ」なので、`update()` の最後でモードに関係なく `this.visible` のときだけ判定する）
 
-盾の構え (`player.blocking`) は**移動する飛び道具**(`Arrow`/`BossSlash`/`BigArrow`/`Spike`)を構えブロック半径内で全方向無効化（正面=反射、それ以外=消滅、いずれもダメージ0）。**接触ダメージ(突進等)とビーム(`Beam`)・波動(`Shockwave`)は盾で防げない**（回避用）。
+盾の構え (`player.blocking`) は**移動する飛び道具**(`Arrow`/`BossSlash`/`BigArrow`/`Spike`/`SpearWave`)を構えブロック半径内で全方向無効化（正面=反射、それ以外=消滅、いずれもダメージ0）。ただし `BigArrow`/`Beam` は `blockable` 引数でボスごとにガード可否を変えられる（デフォルトは `BigArrow=true`（ガード可）、`Beam=false`（ガード不可）で従来動作のまま）。**接触ダメージ(突進等)とビーム(`Beam`, `blockable`未指定時)・波動(`Shockwave`)は盾で防げない**（回避用）。
 
-爆弾(`BombProjectile`)は**盾の強化(`upgrades.shield`)時のみ**反射可能。構えていれば**向きに関係なく**、ブロック半径(`player.r+32`)に入った爆弾を最寄りの敵の位置へ落とす（`reflectTo`）。向き依存の `dot` 判定は廃止済み（finicky で反射できないクレーム対応）。未強化時は防げず着弾AOEで被弾。
+爆弾(`BombProjectile`)は**盾の強化(`upgrades.shield`)かつ `shieldBlockable !== false`**時のみ反射可能。構えていれば**向きに関係なく**、ブロック半径(`player.r+32`)に入った爆弾を最寄りの敵の位置へ落とす（`reflectTo`）。向き依存の `dot` 判定は廃止済み（finicky で反射できないクレーム対応）。未強化時は防げず着弾AOEで被弾。`shieldBlockable=false`（ゲーム3のトラックボスのボム散布）は盾強化があっても一切防げない。
 
 ## ビジュアル方針
 
@@ -145,7 +169,7 @@ open index.html
 |------|------|
 | プレイヤー残機 | `Player.constructor` の `this.lives = 3` |
 | プレイヤー無敵時間 | `Player.constructor` の `this.invuln = 1.2`（初期）, `hit()` 内 `this.invuln = 2.0`（被弾後） |
-| ボスHP | `BOSS_MAX_HP = 100`（ゲーム1の基本）。ゲーム2は全ボス `constructor` で `maxHp = 150; hp = 150` |
+| ボスHP | `BOSS_MAX_HP = 100`（ゲーム1の基本）。ゲーム2は全ボス `constructor` で `maxHp = 150; hp = 150`。ゲーム3はボスごとに個別（100/130/150、上表参照） |
 | 武器ダメージ | `Player.onSpaceRelease` / `checkSwordHit` / `executeHammerAOE` 等の各箇所のリテラル |
 | ボスの攻撃間隔 | 各 `update` の `this.modeTimer = N` |
 | プレイヤー速度 | `PLAYER_SPEED = 3.2` |

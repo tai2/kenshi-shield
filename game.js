@@ -566,7 +566,7 @@ class Player {
       let hit = false;
       for (const e of aliveEnemies()) {
         if (Math.hypot(e.x - this.x, e.y - this.y) <= this.r + e.r + 6) {
-          e.takeDamage(2);
+          e.takeDamage(5);
           hit = true;
         }
       }
@@ -775,7 +775,7 @@ class Player {
       if (d > range + e.r) continue;
       const dot = (dx * this.facing.x + dy * this.facing.y) / Math.max(d, 0.0001);
       if (dot > 0.3) {
-        e.takeDamage(2);
+        e.takeDamage(4);
         effects.push({ type: 'spark', x: e.x, y: e.y, life: 0.3 });
       }
     }
@@ -4722,7 +4722,6 @@ class SawBoss3 extends Boss {
     this.vx = 0; this.vy = 0;
     this.bounces = 0;
     this.maxBounces = 2;
-    this.visible = true;
   }
   // 登場演出中のみ無敵。それ以外は「隙タイミングなし」なので常時ダメージを受ける。
   takeDamage(amount) {
@@ -4735,7 +4734,7 @@ class SawBoss3 extends Boss {
       effects.push({ type: 'bossDeath', x: this.x, y: this.y, life: 1.5, maxLife: 1.5 });
     }
   }
-  isAttacking() { return this.visible && this.mode !== 'intro'; } // 本体は常に当たり判定あり
+  isAttacking() { return this.mode !== 'intro'; } // 本体は常に当たり判定あり
   update(dt) {
     if (!this.alive) return;
     if (this.hitFlash > 0) this.hitFlash -= dt;
@@ -4743,26 +4742,20 @@ class SawBoss3 extends Boss {
     this.spinAngle += dt * (this.mode === 'dashing' ? 20 : 6);
 
     if (this.mode === 'intro') {
-      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 0.8; }
+      if (this.modeTimer <= 0) { this.mode = 'idle'; this.modeTimer = 1.4; }
     } else if (this.mode === 'idle') {
-      if (this.modeTimer <= 0) { this.mode = 'teleportOut'; this.modeTimer = 0.25; }
-    } else if (this.mode === 'teleportOut') {
-      this.visible = this.modeTimer > 0.12;
-      if (this.modeTimer <= 0) {
-        const a = Math.random() * Math.PI * 2;
-        const dist = 90 + Math.random() * 60;
-        let tx = player.x + Math.cos(a) * dist, ty = player.y + Math.sin(a) * dist;
-        const cd = Math.hypot(tx - CENTER.x, ty - CENTER.y);
-        if (cd > ARENA_R - this.r - 10) {
-          const k = (ARENA_R - this.r - 10) / cd;
-          tx = CENTER.x + (tx - CENTER.x) * k; ty = CENTER.y + (ty - CENTER.y) * k;
-        }
-        this.x = tx; this.y = ty;
-        this.mode = 'teleportIn'; this.modeTimer = 0.3; this.visible = false;
+      // テレポートせず、じわじわ追いかけてくる
+      const dx = player.x - this.x, dy = player.y - this.y;
+      const d = Math.hypot(dx, dy) || 1;
+      this.x += dx / d * 1.6;
+      this.y += dy / d * 1.6;
+      const ddx = this.x - CENTER.x, ddy = this.y - CENTER.y;
+      const dd = Math.hypot(ddx, ddy);
+      if (dd > ARENA_R - this.r) {
+        this.x = CENTER.x + ddx / dd * (ARENA_R - this.r);
+        this.y = CENTER.y + ddy / dd * (ARENA_R - this.r);
       }
-    } else if (this.mode === 'teleportIn') {
-      this.visible = this.modeTimer < 0.18;
-      if (this.modeTimer <= 0) { this.mode = 'telegraphDash'; this.modeTimer = 0.4; this.visible = true; }
+      if (this.modeTimer <= 0) { this.mode = 'telegraphDash'; this.modeTimer = 0.4; }
     } else if (this.mode === 'telegraphDash') {
       if (this.modeTimer <= 0) {
         const dx = player.x - this.x, dy = player.y - this.y;
@@ -4782,18 +4775,17 @@ class SawBoss3 extends Boss {
         const dot = this.vx * nx + this.vy * ny;
         this.vx -= 2 * dot * nx; this.vy -= 2 * dot * ny;
         this.bounces++;
-        if (this.bounces >= this.maxBounces) { this.vx = 0; this.vy = 0; this.mode = 'idle'; this.modeTimer = 0.6; }
+        if (this.bounces >= this.maxBounces) { this.vx = 0; this.vy = 0; this.mode = 'idle'; this.modeTimer = 1.4; }
       }
-      if (this.modeTimer <= 0) { this.vx = 0; this.vy = 0; this.mode = 'idle'; this.modeTimer = 0.6; }
+      if (this.modeTimer <= 0) { this.vx = 0; this.vy = 0; this.mode = 'idle'; this.modeTimer = 1.4; }
     }
-    // 「本体の当たり判定:常に」— 表示中は常に接触ダメージ判定(モード限定なしの意図的な例外)
-    if (this.visible && player.alive &&
+    // 「本体の当たり判定:常に」— 登場演出中を除き常に接触ダメージ判定(モード限定なしの意図的な例外)
+    if (this.mode !== 'intro' && player.alive &&
         Math.hypot(player.x - this.x, player.y - this.y) < this.r + player.r) {
       player.hit();
     }
   }
   draw(ctx) {
-    if (!this.visible) return;
     this.baseDraw(function() {
       let color = '#cdd1d8';
       if (this.mode === 'dashing') color = '#ff7060';
@@ -6027,7 +6019,7 @@ function drawWeaponSelect(dt) {
       shield: '盾: 構えて反射 (2) / 長押し投げ (5)',
       hammer: 'ハンマー: 範囲攻撃 (5、1秒溜め) / 長押しで回転攻撃 (1連続)',
       bow: '弓: 矢を射る (3) / 長押しで自動ねらい撃ち (5)',
-      spear: '槍: つつく (2) / 2秒長押しで突撃 (2、方向コントロール可)',
+      spear: '槍: つつく (4) / 2秒長押しで突撃 (5、方向コントロール可)',
     }[selectedWeapon];
     ctx.fillStyle = '#333';
     ctx.font = '16px sans-serif';

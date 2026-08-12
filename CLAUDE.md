@@ -66,7 +66,7 @@ open index.html
 | 盾 | 押している間 `blocking=true`。飛び道具を**全方向で無効化（完全無敵）**、正面なら反射 2dmg | 0.7秒以上で離すと `ShieldThrown` 投擲 5dmg |
 | ハンマー | 1秒チャージ後 AOE 5dmg (range 75) | 0.4秒以上で回転モード（移動可、連続2dmg/0.3s） |
 | 弓（**ゲーム2以降**） | `PlayerArrow` 射出 3dmg | 0.12秒以上で `bowAiming`（最寄り敵を自動照準）→ 離すと 5dmg |
-| 槍（**ゲーム3限定**） | `checkSpearHit()` でつつく 2dmg (range 56) | 2秒チャージで離すと `spearDashing` 突撃状態へ。`Player.update` が通常の移動処理をバイパスして `updateSpearDash()` を呼ぶ。矢印キー/スティックで軌道を緩やかに操作可能、接触ダメージ2dmg |
+| 槍（**ゲーム3限定**） | `checkSpearHit()` でつつく 4dmg (range 56) | 2秒チャージで離すと `spearDashing` 突撃状態へ。`Player.update` が通常の移動処理をバイパスして `updateSpearDash()` を呼ぶ。矢印キー/スティックで軌道を緩やかに操作可能、接触ダメージ5dmg |
 
 - 武器一覧は `availableWeapons()`（ゲーム2で弓、ゲーム3で槍が増える）。`weaponButtons()` がこれを元にボタンを動的生成。
 - 弓の強化(`upgrades.bow`, 4円)は `PlayerArrow` が壁で**2回反射**する（`maxBounces`）。
@@ -131,7 +131,7 @@ open index.html
 | 2 | `bow3` | `BowBoss3` | 100 | 3連射(`Arrow`, 盾可) / 溜め大矢(`BigArrow(blockable=false)`, 盾不可→`stunned`5秒) / 突撃(壁反射2回で停止、隙なし)。逃走移動あり |
 | 3 | `hammer3` | `HammerBoss3` | 130 | `HammerBoss2`と同じパターンを流用（ロックオン叩きつけ/追跡rage10秒→cd5秒/波動`Shockwave`）。全ガード不可 |
 | 4 | `bomb3` | `BombBoss3` | 130 | `BombBoss2`と同じパターンを流用（自爆AOE→cd10秒/ロックオン`Beam`/ボム3連投、盾可）。本体接触判定なし |
-| 5 | `saw3` | `SawBoss3` | 130 | **隙タイミングなし**。`teleportOut`→`teleportIn`→`telegraphDash`→`dashing`(壁反射2回)のループのみ。本体は登場演出中を除き常に接触ダメージ判定あり（`isAttacking()`の一般原則の意図的な例外）。全ガード不可 |
+| 5 | `saw3` | `SawBoss3` | 130 | **隙タイミングなし**。`idle`(じわじわ追跡)→`telegraphDash`→`dashing`(壁反射2回)のループのみ（テレポートなし）。本体は登場演出中を除き常に接触ダメージ判定あり（`isAttacking()`の一般原則の意図的な例外）。全ガード不可 |
 | 6(ラスボス) | `spear3` | `SpearBoss3` | 130 | 直進突撃(壁で停止) / 壁反射突撃(2回まで) / 壁反射のたびに`SpearWave`(盾可)を飛ばす突撃。いずれも→cd10秒。接触は突撃中のみ |
 | 7(隠し) | `truck3` | `TruckBoss3` | 150 | `teleport`で移動→ボム散布(`BombProjectile(reflectable=false, shieldBlockable=false)`, 盾不可)／後方排気口から`Beam(blockable=true)`(盾可)を出しながら突進。接触は突進中のみ |
 
